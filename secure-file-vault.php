@@ -1,20 +1,31 @@
 <?php
 /**
  * Plugin Name: Secure File Vault
+ * Plugin URI: https://github.com/jagdishsarma36/secure-file-vault
  * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links) — all under one unified "Secure Vault" menu with a shared modern design system.
- * Version: 2.0.0
- * Author: Custom
+ * Version: 2.1.0
+ * Author: Jagdish Sarma
+ * Author URI: https://github.com/jagdishsarma36
  * License: GPL2
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: wfv
+ * Requires at least: 5.8
+ * Requires PHP: 7.4
+ * Update URI: https://github.com/jagdishsarma36/secure-file-vault
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WFV_VERSION', '2.0.0' );
+define( 'WFV_VERSION', '2.1.0' );
 define( 'WFV_PRIVATE_DIRNAME', 'wfv-private' );
 define( 'WFV_FILE', __FILE__ );
+define( 'WFV_DIR', plugin_dir_path( __FILE__ ) );
+
+// GitHub auto-updates (checks https://github.com/jagdishsarma36/secure-file-vault for new releases).
+// To disable: comment out the line below, or simply delete updater.php.
+require_once WFV_DIR . 'updater.php';
 
 /**
  * ------------------------------------------------------------------
