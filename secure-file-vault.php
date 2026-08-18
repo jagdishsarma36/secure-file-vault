@@ -3,7 +3,7 @@
  * Plugin Name: Secure File Vault
  * Plugin URI: https://github.com/jagdishsarma36/secure-file-vault
  * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links) — all under one unified "Secure Vault" menu with a shared modern design system.
- * Version: 2.1.0
+ * Version: 2.2.0
  * Author: Jagdish Sarma
  * Author URI: https://github.com/jagdishsarma36
  * License: GPL2
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WFV_VERSION', '2.1.0' );
+define( 'WFV_VERSION', '2.2.0' );
 define( 'WFV_PRIVATE_DIRNAME', 'wfv-private' );
 define( 'WFV_FILE', __FILE__ );
 define( 'WFV_DIR', plugin_dir_path( __FILE__ ) );
@@ -546,6 +546,15 @@ function wfv_design_system_css() {
 		.wfv-split-search{ padding:14px 14px 8px; position:relative; }
 		.wfv-split-search input{ width:100%; box-sizing:border-box; padding:8px 12px 8px 30px; border-radius:8px; border:1px solid var(--wfv-border); background:#fff; font-size:13px; }
 		.wfv-split-search:before{ content:"🔍"; position:absolute; left:24px; top:22px; font-size:12px; opacity:.55; }
+		.wfv-import-link{ display:block; text-align:center; margin:0 14px 14px; font-size:12px; color:var(--wfv-slate); text-decoration:none; cursor:pointer; }
+		.wfv-import-link:hover{ color:var(--wfv-primary); }
+		.wfv-import-modal-body p{ font-size:12.5px; color:var(--wfv-slate); line-height:1.6; }
+		.wfv-import-formats{ display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 16px; }
+		.wfv-import-formats span{ font-size:11px; padding:3px 10px; border-radius:99px; background:var(--wfv-primary-light); color:var(--wfv-primary-dark); font-weight:600; }
+		.wfv-import-warning{ background:#fffbea; border:1px solid #fbe38a; border-radius:8px; padding:10px 14px; font-size:12px; color:#7a5b00; margin-bottom:16px; }
+		.wfv-import-drop{ border:2px dashed var(--wfv-border); border-radius:10px; padding:26px 16px; text-align:center; cursor:pointer; background:var(--wfv-bg); margin-bottom:16px; }
+		.wfv-import-drop:hover{ border-color:var(--wfv-primary); }
+		.wfv-import-filename{ font-weight:600; color:var(--wfv-primary); margin-top:6px; font-size:12.5px; }
 		.wfv-split-tabs{ display:flex; gap:4px; padding:0 14px 10px; }
 		.wfv-split-tabs button{ flex:1; background:#fff; border:1px solid var(--wfv-border); padding:6px 8px; font-size:11.5px; font-weight:600; border-radius:7px; cursor:pointer; color:var(--wfv-slate); }
 		.wfv-split-tabs button.wfv-tab-active{ background:var(--wfv-primary); border-color:var(--wfv-primary); color:#fff; }
@@ -623,6 +632,91 @@ function wfv_render_top_nav( $active ) {
 			<a href="<?php echo esc_url( admin_url( 'admin.php?page=wfv-passwords' ) ); ?>" class="<?php echo 'passwords' === $active ? 'wfv-tab-active' : ''; ?>">🔑 Passwords</a>
 		</div>
 	</div>
+	<?php
+}
+
+/** The small "Import" trigger link that sits under the sidebar's Add button on both Notes and Passwords. */
+function wfv_render_import_trigger() {
+	?>
+	<a href="#" class="wfv-import-link" id="wfv-import-trigger">⬆ Import from CSV</a>
+	<?php
+}
+
+/**
+ * The Import modal itself, shared by both pages. $ctx_view is 'notes' or
+ * 'passwords' — it just controls which page you're sent back to after
+ * import (the backend auto-detects the file format and routes each row
+ * to the right place regardless of which page you imported from).
+ */
+function wfv_render_import_modal( $ctx_view ) {
+	?>
+	<div class="wfv-modal" id="wfv-import-modal" style="display:none;">
+		<div class="wfv-modal-backdrop" id="wfv-import-modal-backdrop"></div>
+		<div class="wfv-modal-content" style="max-width:480px;">
+			<button type="button" class="wfv-modal-close" id="wfv-import-modal-close">&times;</button>
+			<h2>Import from CSV</h2>
+			<div class="wfv-import-modal-body">
+				<p>Supports exports from:</p>
+				<div class="wfv-import-formats">
+					<span>LastPass</span>
+					<span>Google Password Manager</span>
+					<span>Bitwarden</span>
+					<span>Generic CSV</span>
+				</div>
+				<p>Bitwarden and LastPass exports can contain both logins and secure notes in one file — each row is automatically sorted into <strong>Passwords</strong> or <strong>Notes</strong>. A generic CSV needs columns like <code>title, username, password, url, notes, tags</code> (or just <code>title, content, tags</code> for notes only).</p>
+				<div class="wfv-import-warning">⚠️ Export files contain plaintext passwords. After importing, delete the original file from your computer.</div>
+
+				<form method="post" enctype="multipart/form-data" id="wfv-import-form">
+					<?php wp_nonce_field( 'wfv_import_csv', 'wfv_import_nonce' ); ?>
+					<input type="hidden" name="wfv_action" value="import_csv">
+					<input type="hidden" name="ctx_view" value="<?php echo esc_attr( $ctx_view ); ?>">
+					<div class="wfv-import-drop" id="wfv-import-drop">
+						<div>📄 Click to choose a CSV file</div>
+						<div class="wfv-import-filename" id="wfv-import-filename"></div>
+						<input type="file" name="import_file" id="wfv-import-file-input" accept=".csv,text/csv" style="display:none;" required>
+					</div>
+					<button type="submit" class="button button-primary button-hero" id="wfv-import-submit" style="width:100%;" disabled>Import</button>
+				</form>
+			</div>
+		</div>
+	</div>
+	<script>
+	(function(){
+		var trigger  = document.getElementById('wfv-import-trigger');
+		var modal    = document.getElementById('wfv-import-modal');
+		var drop     = document.getElementById('wfv-import-drop');
+		var fileInput = document.getElementById('wfv-import-file-input');
+		var filenameEl = document.getElementById('wfv-import-filename');
+		var submitBtn = document.getElementById('wfv-import-submit');
+
+		if ( ! trigger ) { return; }
+		trigger.addEventListener('click', function(e){ e.preventDefault(); modal.style.display = 'flex'; });
+		function closeImportModal(){ modal.style.display = 'none'; }
+		document.getElementById('wfv-import-modal-close').addEventListener('click', closeImportModal);
+		document.getElementById('wfv-import-modal-backdrop').addEventListener('click', closeImportModal);
+
+		drop.addEventListener('click', function(){ fileInput.click(); });
+		fileInput.addEventListener('change', function(){
+			if ( fileInput.files.length ) {
+				filenameEl.textContent = fileInput.files[0].name;
+				submitBtn.disabled = false;
+			}
+		});
+		[ 'dragenter', 'dragover' ].forEach(function(evt){
+			drop.addEventListener(evt, function(e){ e.preventDefault(); drop.style.borderColor = 'var(--wfv-primary)'; });
+		});
+		[ 'dragleave', 'drop' ].forEach(function(evt){
+			drop.addEventListener(evt, function(e){ e.preventDefault(); drop.style.borderColor = ''; });
+		});
+		drop.addEventListener('drop', function(e){
+			if ( e.dataTransfer.files.length ) {
+				fileInput.files = e.dataTransfer.files;
+				filenameEl.textContent = e.dataTransfer.files[0].name;
+				submitBtn.disabled = false;
+			}
+		});
+	})();
+	</script>
 	<?php
 }
 
@@ -1047,6 +1141,9 @@ function wfv_handle_admin_actions() {
 		case 'revoke_password_link':
 			wfv_process_revoke_password_link();
 			break;
+		case 'import_csv':
+			wfv_process_import_csv();
+			break;
 	}
 }
 
@@ -1414,6 +1511,236 @@ function wfv_parse_tags( $raw ) {
 	$tags = array_values( array_unique( $tags ) );
 	$tags = array_slice( $tags, 0, 15 ); // keep it sane
 	return implode( ', ', $tags );
+}
+
+/**
+ * ------------------------------------------------------------------
+ * CSV import — passwords and/or notes, from LastPass, Google Password
+ * Manager, Bitwarden, or a plain generic CSV. Auto-detects the format
+ * from the header row. Bitwarden and LastPass exports can contain a
+ * mix of logins and secure notes in one file — each row is routed to
+ * the Passwords or Notes table individually based on its own type.
+ * ------------------------------------------------------------------
+ */
+function wfv_detect_csv_format( $header ) {
+	if ( in_array( 'login_uri', $header, true ) || in_array( 'login_password', $header, true ) ) {
+		return 'bitwarden';
+	}
+	if ( in_array( 'extra', $header, true ) && in_array( 'grouping', $header, true ) ) {
+		return 'lastpass';
+	}
+	if ( in_array( 'password', $header, true ) && in_array( 'note', $header, true ) && ! in_array( 'notes', $header, true ) ) {
+		return 'google'; // Google Password Manager: name,url,username,password,note
+	}
+	if ( ! in_array( 'password', $header, true ) && in_array( 'content', $header, true ) ) {
+		return 'generic_notes'; // a plain notes-only CSV: title,content,tags
+	}
+	return 'generic'; // title,username,password,url,notes,tags (flexible column names)
+}
+
+function wfv_normalize_import_row( $r, $format ) {
+	$get = function ( $keys ) use ( $r ) {
+		foreach ( (array) $keys as $k ) {
+			if ( isset( $r[ $k ] ) && '' !== trim( (string) $r[ $k ] ) ) {
+				return trim( (string) $r[ $k ] );
+			}
+		}
+		return '';
+	};
+
+	switch ( $format ) {
+		case 'bitwarden':
+			$is_note = 'note' === strtolower( $get( 'type' ) );
+			return array(
+				'kind'     => $is_note ? 'note' : 'password',
+				'title'    => $get( 'name' ),
+				'username' => $get( 'login_username' ),
+				'password' => $get( 'login_password' ),
+				'url'      => $get( 'login_uri' ),
+				'notes'    => $get( 'notes' ),
+				'tags'     => $get( 'folder' ),
+				'starred'  => in_array( strtolower( $get( 'favorite' ) ), array( '1', 'true' ), true ),
+			);
+
+		case 'lastpass':
+			$url     = $get( 'url' );
+			$is_note = ( 'http://sn' === $url ); // LastPass's sentinel URL for Secure Notes
+			return array(
+				'kind'     => $is_note ? 'note' : 'password',
+				'title'    => $get( 'name' ),
+				'username' => $get( 'username' ),
+				'password' => $get( 'password' ),
+				'url'      => $is_note ? '' : $url,
+				'notes'    => $get( 'extra' ),
+				'tags'     => $get( 'grouping' ),
+				'starred'  => '1' === $get( 'fav' ),
+			);
+
+		case 'google':
+			return array(
+				'kind'     => 'password',
+				'title'    => $get( 'name' ),
+				'username' => $get( 'username' ),
+				'password' => $get( 'password' ),
+				'url'      => $get( 'url' ),
+				'notes'    => $get( 'note' ),
+				'tags'     => '',
+				'starred'  => false,
+			);
+
+		case 'generic_notes':
+			return array(
+				'kind'     => 'note',
+				'title'    => $get( array( 'title', 'name' ) ),
+				'username' => '',
+				'password' => '',
+				'url'      => '',
+				'notes'    => $get( array( 'content', 'notes', 'note' ) ),
+				'tags'     => $get( array( 'tags', 'folder', 'category' ) ),
+				'starred'  => false,
+			);
+
+		default: // generic password CSV
+			return array(
+				'kind'     => 'password',
+				'title'    => $get( array( 'title', 'name' ) ),
+				'username' => $get( array( 'username', 'user', 'email' ) ),
+				'password' => $get( 'password' ),
+				'url'      => $get( array( 'url', 'website', 'site', 'login_uri' ) ),
+				'notes'    => $get( array( 'notes', 'note', 'extra' ) ),
+				'tags'     => $get( array( 'tags', 'folder', 'grouping', 'category' ) ),
+				'starred'  => false,
+			);
+	}
+}
+
+/** Reads an uploaded CSV file (by its temp path) and returns an array of normalized rows. */
+function wfv_parse_import_csv_file( $path ) {
+	$handle = @fopen( $path, 'r' );
+	if ( ! $handle ) {
+		return array();
+	}
+
+	$header = fgetcsv( $handle );
+	if ( ! $header ) {
+		fclose( $handle );
+		return array();
+	}
+	// Strip a UTF-8 BOM if present on the first header cell, then normalize.
+	$header[0] = preg_replace( '/^\xEF\xBB\xBF/', '', $header[0] );
+	$header    = array_map(
+		function ( $h ) {
+			return strtolower( trim( (string) $h ) );
+		},
+		$header
+	);
+
+	$format = wfv_detect_csv_format( $header );
+
+	$rows  = array();
+	$count = 0;
+	while ( false !== ( $data = fgetcsv( $handle ) ) && $count < 2000 ) { // sane upper bound
+		if ( 1 === count( $data ) && '' === trim( (string) $data[0] ) ) {
+			continue; // skip blank lines
+		}
+		$assoc = array();
+		foreach ( $header as $i => $col_name ) {
+			$assoc[ $col_name ] = isset( $data[ $i ] ) ? $data[ $i ] : '';
+		}
+		$rows[] = wfv_normalize_import_row( $assoc, $format );
+		$count++;
+	}
+	fclose( $handle );
+	return $rows;
+}
+
+function wfv_process_import_csv() {
+	check_admin_referer( 'wfv_import_csv', 'wfv_import_nonce' );
+
+	if ( empty( $_FILES['import_file'] ) || ! isset( $_FILES['import_file']['error'] ) || UPLOAD_ERR_OK !== $_FILES['import_file']['error'] ) {
+		wfv_redirect_with_notice( 'error', 'Please choose a CSV file to import.' );
+	}
+	if ( (int) $_FILES['import_file']['size'] > 5 * MB_IN_BYTES ) {
+		wfv_redirect_with_notice( 'error', 'That file is larger than 5MB — please split it or contact support.' );
+	}
+
+	$rows = wfv_parse_import_csv_file( $_FILES['import_file']['tmp_name'] );
+	if ( empty( $rows ) ) {
+		wfv_redirect_with_notice( 'error', 'No rows could be read from that file. Make sure it is a CSV export from LastPass, Google Password Manager, or Bitwarden, or matches: title,username,password,url,notes,tags' );
+	}
+
+	global $wpdb;
+	$user_id = get_current_user_id();
+	$key     = wfv_pm_active_key(); // null if a master password is set but the vault is locked
+
+	$pw_count   = 0;
+	$note_count = 0;
+	$skipped    = 0;
+	$vault_locked_skips = 0;
+
+	foreach ( $rows as $row ) {
+		if ( 'note' === $row['kind'] ) {
+			if ( '' === $row['title'] && '' === $row['notes'] ) {
+				$skipped++;
+				continue;
+			}
+			$wpdb->insert(
+				wfv_notes_table(),
+				array(
+					'title'      => sanitize_text_field( $row['title'] ),
+					'content'    => wp_kses_post( $row['notes'] ),
+					'color'      => 'yellow',
+					'tags'       => wfv_parse_tags( $row['tags'] ),
+					'pinned'     => 0,
+					'sort_order' => 0,
+					'created_by' => $user_id,
+					'created_at' => current_time( 'mysql' ),
+					'updated_at' => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%s' )
+			);
+			$note_count++;
+			continue;
+		}
+
+		// Password row.
+		if ( '' === $row['title'] ) {
+			$skipped++;
+			continue;
+		}
+		if ( null === $key ) {
+			$skipped++;
+			$vault_locked_skips++;
+			continue;
+		}
+		$wpdb->insert(
+			wfv_passwords_table(),
+			array(
+				'title'              => sanitize_text_field( $row['title'] ),
+				'username'           => sanitize_text_field( $row['username'] ),
+				'password_encrypted' => wfv_pm_encrypt_raw( $row['password'], $key ),
+				'url'                => esc_url_raw( $row['url'] ),
+				'notes_encrypted'    => wfv_pm_encrypt_raw( sanitize_textarea_field( $row['notes'] ), $key ),
+				'tags'               => wfv_parse_tags( $row['tags'] ),
+				'color'              => 'gray',
+				'starred'            => $row['starred'] ? 1 : 0,
+				'created_by'         => $user_id,
+				'created_at'         => current_time( 'mysql' ),
+				'updated_at'         => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s' )
+		);
+		$pw_count++;
+	}
+
+	$msg = sprintf( 'Imported %d password%s and %d note%s.', $pw_count, 1 === $pw_count ? '' : 's', $note_count, 1 === $note_count ? '' : 's' );
+	if ( $skipped ) {
+		$msg .= sprintf( ' Skipped %d row%s', $skipped, 1 === $skipped ? '' : 's' );
+		$msg .= $vault_locked_skips ? ' (unlock your vault to import passwords).' : ' (missing a title).';
+	}
+	$msg .= ' For your security, please delete the original export file from your computer now.';
+
+	wfv_redirect_with_notice( 'success', $msg );
 }
 
 function wfv_process_create_note() {
@@ -3194,6 +3521,7 @@ function wfv_render_notes_page() {
 					</div>
 				<?php endif; ?>
 				<button type="button" class="wfv-split-add" id="wfv-add-note-trigger">+ New note</button>
+				<?php wfv_render_import_trigger(); ?>
 				<div class="wfv-split-list" id="wfv-notes-list">
 					<?php if ( empty( $notes ) ) : ?>
 						<div class="wfv-split-empty-list">No notes yet — click above to write your first one.</div>
@@ -3273,6 +3601,8 @@ function wfv_render_notes_page() {
 			</div>
 		</div>
 	</div>
+
+	<?php wfv_render_import_modal( 'notes' ); ?>
 
 	<div class="wfv-toast" id="wfv-note-toast"></div>
 
@@ -3737,6 +4067,7 @@ function wfv_render_passwords_page() {
 					</div>
 				<?php endif; ?>
 				<button type="button" class="wfv-split-add" id="wfv-add-pw-trigger">+ Add password</button>
+				<?php wfv_render_import_trigger(); ?>
 				<div class="wfv-split-list" id="wfv-pw-list">
 					<?php if ( empty( $entries ) ) : ?>
 						<div class="wfv-split-empty-list" data-kind="mine">No passwords saved yet.</div>
@@ -3913,6 +4244,8 @@ function wfv_render_passwords_page() {
 			<div id="wfv-pw-link-list" style="margin-top:14px;font-size:13px;color:#646970;">Loading&hellip;</div>
 		</div>
 	</div>
+
+	<?php wfv_render_import_modal( 'passwords' ); ?>
 
 	<div class="wfv-toast" id="wfv-pw-toast"></div>
 

@@ -4,7 +4,7 @@ Tags: file sharing, password manager, notes, private files, security
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.1.0
+Stable tag: 2.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,6 +36,7 @@ Private file storage with Drive-style folders, a LastPass-style notes and passwo
 * Optional **master password**, set from your WordPress profile page, which re-encrypts your vault with a key that's never stored anywhere — your vault then has to be unlocked each session
 * Share a password with another WordPress user, or generate a public link (with an optional access password, expiry, and view limit) for people without an account
 * Built-in password generator and strength meter
+* Import from **LastPass**, **Google Password Manager**, or **Bitwarden** CSV exports, or a generic CSV — auto-detected by format, with logins and secure notes routed to the right place automatically
 * No admin override, anywhere — password entries are private to their owner even from site administrators
 
 = Auto-updates =
@@ -79,6 +80,10 @@ No. Everything — file storage, encryption, the rich-text editor, password gene
 
 It checks the GitHub repo's latest release (or tag, if no release is published) every few hours, and if it's newer than your installed version, WordPress will show a normal "Update available" notice on the Plugins page. To disable it entirely, open `secure-file-vault.php` and comment out the line that requires `updater.php`, or delete that file.
 
+= Can I import from my old password manager? =
+
+Yes — from either the Notes or Passwords screen, use "⬆ Import from CSV". It auto-detects LastPass, Google Password Manager, and Bitwarden export formats, plus a generic `title,username,password,url,notes,tags` CSV. Bitwarden and LastPass exports that mix logins and secure notes in one file are split automatically — logins go to Passwords, notes go to Notes. Delete the original export file from your computer after importing, since it contains plaintext passwords.
+
 == Screenshots ==
 
 1. Files — folders with color tags and starring
@@ -86,6 +91,9 @@ It checks the GitHub repo's latest release (or tag, if no release is published) 
 3. Passwords — the same layout, with reveal/copy/generate and a master-password lock screen
 
 == Changelog ==
+
+= 2.2.0 =
+* Added: CSV import for Passwords and Notes, from LastPass, Google Password Manager, or Bitwarden exports (auto-detected), or a generic CSV. Mixed exports (Bitwarden/LastPass secure notes alongside logins) are automatically split between the two modules.
 
 = 2.1.0 =
 * Added: self-contained GitHub-based auto-updater (see `updater.php`), toggled by a single line in the main plugin file
