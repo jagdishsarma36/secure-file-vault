@@ -4,11 +4,11 @@ Tags: file sharing, password manager, notes, private files, security
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.2.0
+Stable tag: 2.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Private file storage with Drive-style folders, a LastPass-style notes and password manager, and revocable share links — all self-hosted inside your own WordPress site.
+Private file storage with Drive-style folders, a LastPass-style notes and password manager, CSV import, an HTML editor with shortcode embedding, and revocable share links — all self-hosted inside your own WordPress site.
 
 == Description ==
 
@@ -38,6 +38,12 @@ Private file storage with Drive-style folders, a LastPass-style notes and passwo
 * Built-in password generator and strength meter
 * Import from **LastPass**, **Google Password Manager**, or **Bitwarden** CSV exports, or a generic CSV — auto-detected by format, with logins and secure notes routed to the right place automatically
 * No admin override, anywhere — password entries are private to their owner even from site administrators
+
+= HTML Editor =
+
+* A dual-pane composer — HTML source on the left, a live preview on the right, similar in spirit to html5-editor.net
+* Demo content, one-click minify, find & replace, a color picker, adjustable font size, and an optional Bootstrap CDN toggle for previewing (not saved into your HTML)
+* Every saved page gets a shortcode, `[wfv_html id="X"]`, to embed it on any post or page on your site — or `[wfv_html id="X" iframe="yes"]` to render it inside a sandboxed iframe instead
 
 = Auto-updates =
 
@@ -84,6 +90,10 @@ It checks the GitHub repo's latest release (or tag, if no release is published) 
 
 Yes — from either the Notes or Passwords screen, use "⬆ Import from CSV". It auto-detects LastPass, Google Password Manager, and Bitwarden export formats, plus a generic `title,username,password,url,notes,tags` CSV. Bitwarden and LastPass exports that mix logins and secure notes in one file are split automatically — logins go to Passwords, notes go to Notes. Delete the original export file from your computer after importing, since it contains plaintext passwords.
 
+= Is the HTML Editor's saved content sanitized? =
+
+No — like WordPress's own Custom HTML block, a saved page is rendered exactly as written, including any `<script>` tags, wherever you place its shortcode. That's the point (it needs to actually work as real HTML/CSS/JS), but it also means only people you trust with the HTML Editor screen should have access to it — restrict `wfv_allowed_roles` if needed. Use `iframe="yes"` on the shortcode if you want a page's script/CSS sandboxed away from the rest of your site.
+
 == Screenshots ==
 
 1. Files — folders with color tags and starring
@@ -91,6 +101,9 @@ Yes — from either the Notes or Passwords screen, use "⬆ Import from CSV". It
 3. Passwords — the same layout, with reveal/copy/generate and a master-password lock screen
 
 == Changelog ==
+
+= 2.3.0 =
+* Added: HTML Editor — a dual-pane HTML source/live-preview composer (demo content, minify, find & replace, color picker, Bootstrap preview toggle). Saved pages get a `[wfv_html id="X"]` shortcode to embed on the front end, with an optional sandboxed-iframe mode.
 
 = 2.2.0 =
 * Added: CSV import for Passwords and Notes, from LastPass, Google Password Manager, or Bitwarden exports (auto-detected), or a generic CSV. Mixed exports (Bitwarden/LastPass secure notes alongside logins) are automatically split between the two modules.
@@ -135,6 +148,9 @@ Yes — from either the Notes or Passwords screen, use "⬆ Import from CSV". It
 * Initial release: private file storage with per-recipient revocable share links (optional password, expiry, download limit)
 
 == Upgrade Notice ==
+
+= 2.3.0 =
+Adds the HTML Editor tool (dual-pane live preview) with a `[wfv_html id="X"]` shortcode for front-end embedding.
 
 = 2.1.0 =
 Adds auto-updates via GitHub and fixes a bug where editing a second note in a row could show the previous note's content in the editor. Recommended for all users.
