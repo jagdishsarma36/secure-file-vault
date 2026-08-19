@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Secure File Vault
  * Plugin URI: https://github.com/jagdishsarma36/secure-file-vault
- * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links) — all under one unified "Secure Vault" menu with a shared modern design system.
- * Version: 2.2.0
+ * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links), CSV import from LastPass/Google/Bitwarden, and an HTML Editor with a live dual-pane preview whose pages embed anywhere via a shortcode — all under one unified "Secure Vault" menu with a shared modern design system.
+ * Version: 2.3.0
  * Author: Jagdish Sarma
  * Author URI: https://github.com/jagdishsarma36
  * License: GPL2
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WFV_VERSION', '2.2.0' );
+define( 'WFV_VERSION', '2.3.0' );
 define( 'WFV_PRIVATE_DIRNAME', 'wfv-private' );
 define( 'WFV_FILE', __FILE__ );
 define( 'WFV_DIR', plugin_dir_path( __FILE__ ) );
@@ -60,6 +60,7 @@ function wfv_install_schema() {
 	$passwords_table       = $wpdb->prefix . 'wfv_passwords';
 	$pw_user_shares_table  = $wpdb->prefix . 'wfv_password_user_shares';
 	$pw_link_shares_table  = $wpdb->prefix . 'wfv_password_link_shares';
+	$html_table            = $wpdb->prefix . 'wfv_html_snippets';
 
 	$sql = "CREATE TABLE {$files_table} (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -174,6 +175,17 @@ function wfv_install_schema() {
 		PRIMARY KEY  (id),
 		UNIQUE KEY token (token),
 		KEY created_by (created_by)
+	) {$charset_collate};
+
+	CREATE TABLE {$html_table} (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		title VARCHAR(191) NOT NULL,
+		html_content LONGTEXT,
+		created_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL,
+		PRIMARY KEY  (id),
+		KEY created_by (created_by)
 	) {$charset_collate};";
 
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -248,6 +260,10 @@ function wfv_password_user_shares_table() {
 function wfv_password_link_shares_table() {
 	global $wpdb;
 	return $wpdb->prefix . 'wfv_password_link_shares';
+}
+function wfv_html_table() {
+	global $wpdb;
+	return $wpdb->prefix . 'wfv_html_snippets';
 }
 
 /**
@@ -630,6 +646,7 @@ function wfv_render_top_nav( $active ) {
 			<a href="<?php echo esc_url( admin_url( 'admin.php?page=wfv-vault' ) ); ?>" class="<?php echo 'files' === $active ? 'wfv-tab-active' : ''; ?>">📁 Files</a>
 			<a href="<?php echo esc_url( admin_url( 'admin.php?page=wfv-notes' ) ); ?>" class="<?php echo 'notes' === $active ? 'wfv-tab-active' : ''; ?>">📝 Notes</a>
 			<a href="<?php echo esc_url( admin_url( 'admin.php?page=wfv-passwords' ) ); ?>" class="<?php echo 'passwords' === $active ? 'wfv-tab-active' : ''; ?>">🔑 Passwords</a>
+			<a href="<?php echo esc_url( admin_url( 'admin.php?page=wfv-html' ) ); ?>" class="<?php echo 'html' === $active ? 'wfv-tab-active' : ''; ?>">🧩 HTML Editor</a>
 		</div>
 	</div>
 	<?php
@@ -801,6 +818,17 @@ function wfv_user_can_manage_file( $file ) {
 	return is_user_logged_in() && (int) $file->uploaded_by === get_current_user_id();
 }
 
+/** True if the current user may manage this HTML snippet: owner, or a site admin. */
+function wfv_user_can_manage_html( $row ) {
+	if ( ! $row ) {
+		return false;
+	}
+	if ( current_user_can( 'manage_options' ) ) {
+		return true;
+	}
+	return is_user_logged_in() && (int) $row->created_by === get_current_user_id();
+}
+
 /** True if the current user may manage this folder: owner, or a site admin. */
 function wfv_user_can_manage_folder( $folder ) {
 	if ( ! $folder ) {
@@ -898,6 +926,14 @@ function wfv_admin_menu() {
 		'read',
 		'wfv-passwords',
 		'wfv_render_passwords_page'
+	);
+	add_submenu_page(
+		'wfv-vault',
+		'HTML Editor',
+		'🧩 HTML Editor',
+		'read',
+		'wfv-html',
+		'wfv_render_html_editor_page'
 	);
 }
 
@@ -1144,6 +1180,15 @@ function wfv_handle_admin_actions() {
 		case 'import_csv':
 			wfv_process_import_csv();
 			break;
+		case 'create_html':
+			wfv_process_create_html();
+			break;
+		case 'update_html':
+			wfv_process_update_html();
+			break;
+		case 'delete_html':
+			wfv_process_delete_html();
+			break;
 	}
 }
 
@@ -1171,6 +1216,15 @@ function wfv_redirect_with_notice( $type, $message, $open_file_id = 0, $open_pas
 		);
 		if ( $open_password_id ) {
 			$query['wfv_open_password'] = $open_password_id;
+		}
+	} elseif ( 'html' === $view ) {
+		$query = array(
+			'page'       => 'wfv-html',
+			'wfv_notice' => $type,
+			'wfv_msg'    => rawurlencode( $message ),
+		);
+		if ( isset( $_POST['ctx_open_id'] ) && absint( $_POST['ctx_open_id'] ) ) {
+			$query['wfv_open_html'] = absint( $_POST['ctx_open_id'] );
 		}
 	} else {
 		$query = array(
@@ -1511,6 +1565,112 @@ function wfv_parse_tags( $raw ) {
 	$tags = array_values( array_unique( $tags ) );
 	$tags = array_slice( $tags, 0, 15 ); // keep it sane
 	return implode( ', ', $tags );
+}
+
+/**
+ * ------------------------------------------------------------------
+ * HTML Editor — saved HTML snippets/pages, each embeddable on the
+ * front end via a shortcode: [wfv_html id="X"]
+ * ------------------------------------------------------------------
+ */
+function wfv_process_create_html() {
+	check_admin_referer( 'wfv_create_html', 'wfv_html_nonce' );
+	global $wpdb;
+
+	$title = isset( $_POST['title'] ) ? sanitize_text_field( wp_unslash( $_POST['title'] ) ) : '';
+	if ( '' === $title ) {
+		wfv_redirect_with_notice( 'error', 'A title is required.' );
+	}
+	$html = isset( $_POST['html_content'] ) ? wp_unslash( $_POST['html_content'] ) : '';
+
+	$wpdb->insert(
+		wfv_html_table(),
+		array(
+			'title'        => $title,
+			'html_content' => $html,
+			'created_by'   => get_current_user_id(),
+			'created_at'   => current_time( 'mysql' ),
+			'updated_at'   => current_time( 'mysql' ),
+		),
+		array( '%s', '%s', '%d', '%s', '%s' )
+	);
+
+	wfv_redirect_with_notice( 'success', 'Saved. Your shortcode is ready below.', 0, 0 );
+}
+
+function wfv_process_update_html() {
+	check_admin_referer( 'wfv_update_html', 'wfv_html_update_nonce' );
+	global $wpdb;
+
+	$id  = isset( $_POST['html_id'] ) ? absint( $_POST['html_id'] ) : 0;
+	$row = $id ? $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . wfv_html_table() . " WHERE id = %d", $id ) ) : null;
+
+	if ( ! wfv_user_can_manage_html( $row ) ) {
+		wfv_redirect_with_notice( 'error', 'You do not have permission to edit this page.' );
+	}
+
+	$title = isset( $_POST['title'] ) ? sanitize_text_field( wp_unslash( $_POST['title'] ) ) : $row->title;
+	$html  = isset( $_POST['html_content'] ) ? wp_unslash( $_POST['html_content'] ) : $row->html_content;
+
+	$wpdb->update(
+		wfv_html_table(),
+		array(
+			'title'        => $title,
+			'html_content' => $html,
+			'updated_at'   => current_time( 'mysql' ),
+		),
+		array( 'id' => $id ),
+		array( '%s', '%s', '%s' ),
+		array( '%d' )
+	);
+
+	wfv_redirect_with_notice( 'success', 'Saved.' );
+}
+
+function wfv_process_delete_html() {
+	check_admin_referer( 'wfv_delete_html', 'wfv_html_delete_nonce' );
+	global $wpdb;
+	$id  = isset( $_POST['html_id'] ) ? absint( $_POST['html_id'] ) : 0;
+	$row = $id ? $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . wfv_html_table() . " WHERE id = %d", $id ) ) : null;
+
+	if ( ! wfv_user_can_manage_html( $row ) ) {
+		wfv_redirect_with_notice( 'error', 'You do not have permission to delete this page.' );
+	}
+	$wpdb->delete( wfv_html_table(), array( 'id' => $id ), array( '%d' ) );
+	wfv_redirect_with_notice( 'success', 'Deleted. Any shortcode still referencing it will now show nothing.' );
+}
+
+/**
+ * Front-end shortcode: [wfv_html id="5"] or [wfv_html id="5" iframe="yes"]
+ *
+ * Renders the saved HTML as-is (it's authored by a trusted, logged-in
+ * user of this admin tool — same trust model as WordPress's own Custom
+ * HTML block). Use iframe="yes" to sandbox it in a separate document
+ * instead, useful for embedding a self-contained demo/widget whose CSS
+ * or JS shouldn't interact with the rest of the page.
+ */
+add_shortcode( 'wfv_html', 'wfv_html_shortcode' );
+function wfv_html_shortcode( $atts ) {
+	$atts = shortcode_atts( array( 'id' => 0, 'iframe' => 'no' ), $atts, 'wfv_html' );
+	$id   = absint( $atts['id'] );
+	if ( ! $id ) {
+		return '';
+	}
+
+	global $wpdb;
+	$row = $wpdb->get_row( $wpdb->prepare( "SELECT html_content FROM " . wfv_html_table() . " WHERE id = %d", $id ) );
+	if ( ! $row ) {
+		return '';
+	}
+
+	if ( 'yes' === strtolower( (string) $atts['iframe'] ) ) {
+		return sprintf(
+			'<iframe class="wfv-html-embed" srcdoc="%s" style="width:100%%;border:0;" loading="lazy" onload="this.style.height=(this.contentWindow.document.body.scrollHeight+20)+\'px\';"></iframe>',
+			esc_attr( $row->html_content )
+		);
+	}
+
+	return $row->html_content;
 }
 
 /**
@@ -4620,6 +4780,333 @@ function wfv_render_passwords_page() {
 		function closeShareModal(){ shareModal.style.display = 'none'; }
 		document.getElementById('wfv-pw-share-modal-close').addEventListener('click', closeShareModal);
 		document.getElementById('wfv-pw-share-modal-backdrop').addEventListener('click', closeShareModal);
+	})();
+	</script>
+	<?php
+}
+
+/**
+ * ------------------------------------------------------------------
+ * HTML Editor — a dual-pane HTML source/live-preview composer,
+ * similar in spirit to html5-editor.net. Saved pages get a shortcode
+ * ([wfv_html id="X"]) to embed them on the front end.
+ * ------------------------------------------------------------------
+ */
+function wfv_render_html_editor_page() {
+	if ( ! wfv_user_has_access() ) {
+		echo '<div class="wrap"><h1>HTML Editor</h1><p>You do not have access to the HTML editor.</p></div>';
+		return;
+	}
+	global $wpdb;
+	$user_id  = get_current_user_id();
+	$is_admin = current_user_can( 'manage_options' );
+
+	$notice = isset( $_GET['wfv_notice'] ) ? sanitize_key( $_GET['wfv_notice'] ) : '';
+	$msg    = isset( $_GET['wfv_msg'] ) ? sanitize_text_field( rawurldecode( $_GET['wfv_msg'] ) ) : '';
+	$open_id = isset( $_GET['wfv_open_html'] ) ? absint( $_GET['wfv_open_html'] ) : 0;
+
+	$pages = $is_admin
+		? $wpdb->get_results( "SELECT * FROM " . wfv_html_table() . " ORDER BY updated_at DESC" )
+		: $wpdb->get_results( $wpdb->prepare( "SELECT * FROM " . wfv_html_table() . " WHERE created_by = %d ORDER BY updated_at DESC", $user_id ) );
+
+	$pages_data = array();
+	foreach ( $pages as $p ) {
+		$pages_data[ $p->id ] = array(
+			'title'   => (string) $p->title,
+			'content' => (string) $p->html_content,
+			'updated' => mysql2date( 'M j, Y g:ia', $p->updated_at ),
+		);
+	}
+
+	$demo_html = "<section style=\"font-family:sans-serif;padding:40px;text-align:center;background:linear-gradient(135deg,#4f46e5,#3730a3);color:#fff;border-radius:12px;\">\n  <h1 style=\"margin:0 0 10px;\">Hello, world 👋</h1>\n  <p style=\"opacity:.85;\">Edit the HTML on the left — this preview updates live.</p>\n  <button style=\"margin-top:16px;padding:10px 20px;border:0;border-radius:8px;background:#fff;color:#3730a3;font-weight:600;cursor:pointer;\" onclick=\"alert('It works!')\">Click me</button>\n</section>";
+	?>
+	<div class="wrap wfv-wrap wfv-app">
+		<?php wfv_design_system_css(); ?>
+		<?php wfv_render_top_nav( 'html' ); ?>
+		<style>
+			.wfv-html-toolbar{ display:flex; flex-wrap:wrap; gap:6px; padding:8px 10px; border-bottom:1px solid var(--wfv-border); background:var(--wfv-bg); }
+			.wfv-html-toolbar button, .wfv-html-toolbar select, .wfv-html-toolbar input[type=color]{ font-size:11.5px; padding:5px 9px; border-radius:6px; border:1px solid var(--wfv-border); background:#fff; cursor:pointer; color:var(--wfv-slate); }
+			.wfv-html-toolbar button:hover{ color:var(--wfv-primary); border-color:var(--wfv-primary); }
+			.wfv-html-toolbar input[type=color]{ padding:2px; width:32px; height:28px; cursor:pointer; }
+			.wfv-html-panes{ display:flex; height:520px; }
+			.wfv-html-pane{ flex:1; display:flex; flex-direction:column; min-width:0; }
+			.wfv-html-pane + .wfv-html-pane{ border-left:1px solid var(--wfv-border); }
+			.wfv-html-pane-label{ font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--wfv-muted); padding:6px 10px; background:var(--wfv-bg); border-bottom:1px solid var(--wfv-border); }
+			#wfv-html-source{ flex:1; border:0; resize:none; padding:12px; font-family:Consolas,Monaco,'Courier New',monospace; font-size:13px; line-height:1.5; outline:none; }
+			#wfv-html-preview{ flex:1; border:0; width:100%; background:#fff; }
+			.wfv-html-findreplace{ display:none; gap:6px; padding:6px 10px; border-bottom:1px solid var(--wfv-border); background:#fffbea; }
+			.wfv-html-findreplace input{ font-size:12px; padding:5px 8px; border-radius:6px; border:1px solid var(--wfv-border); }
+			.wfv-shortcode-box{ display:flex; align-items:center; gap:8px; background:var(--wfv-primary-light); border:1px solid #c7d2fe; border-radius:8px; padding:10px 14px; margin-top:14px; }
+			.wfv-shortcode-box code{ flex:1; font-size:13px; }
+			@media (max-width: 900px) {
+				.wfv-html-panes{ flex-direction:column; height:auto; }
+				.wfv-html-pane{ height:320px; }
+			}
+		</style>
+
+		<h1>🧩 HTML Editor</h1>
+		<p class="wfv-sub" style="margin-bottom:16px;">Compose HTML with a live preview, then embed it anywhere on your site with a shortcode.</p>
+
+		<?php if ( $notice && $msg ) : ?>
+			<div class="notice notice-<?php echo esc_attr( $notice ); ?> is-dismissible"><p><?php echo esc_html( $msg ); ?></p></div>
+		<?php endif; ?>
+
+		<div class="wfv-split">
+			<div class="wfv-split-sidebar">
+				<div class="wfv-split-search"><input type="text" id="wfv-html-search" placeholder="Search pages…"></div>
+				<button type="button" class="wfv-split-add" id="wfv-add-html-trigger">+ New page</button>
+				<div class="wfv-split-list" id="wfv-html-list">
+					<?php if ( empty( $pages ) ) : ?>
+						<div class="wfv-split-empty-list">No pages yet — click above to create your first one.</div>
+					<?php endif; ?>
+					<?php foreach ( $pages as $p ) :
+						$search_blob = strtolower( $p->title );
+						?>
+						<div class="wfv-split-item" data-id="<?php echo (int) $p->id; ?>" data-search="<?php echo esc_attr( $search_blob ); ?>">
+							<span class="wfv-item-icon" style="background:#4f46e5;">🧩</span>
+							<div class="wfv-item-text"><strong><?php echo esc_html( $p->title ); ?></strong><span>Updated <?php echo esc_html( mysql2date( 'M j, Y', $p->updated_at ) ); ?></span></div>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			</div>
+
+			<div class="wfv-split-detail" style="padding:0;">
+				<div class="wfv-detail-empty" id="wfv-html-detail-empty" style="padding:80px 20px;">
+					<div class="icon">🧩</div>
+					<p>Select a page on the left, or create a new one.</p>
+				</div>
+
+				<div id="wfv-html-detail-content" style="display:none;">
+					<div style="padding:20px 24px 0;">
+						<input type="text" id="wfv-html-title-field" class="wfv-detail-input" style="max-width:100%;font-size:17px;font-weight:600;" placeholder="Untitled page">
+					</div>
+
+					<div class="wfv-html-toolbar">
+						<button type="button" id="wfv-html-demo-btn">📄 Demo</button>
+						<button type="button" id="wfv-html-clear-btn">🗑 Clear</button>
+						<button type="button" id="wfv-html-minify-btn">📦 Minify</button>
+						<button type="button" id="wfv-html-findreplace-btn">🔍 Find &amp; Replace</button>
+						<input type="color" id="wfv-html-color-picker" title="Pick a color, inserts hex at cursor">
+						<button type="button" id="wfv-html-bootstrap-toggle" title="Preview only — not saved into your HTML">🅱 Bootstrap preview: Off</button>
+						<span style="flex:1;"></span>
+						<button type="button" id="wfv-html-font-minus">A−</button>
+						<button type="button" id="wfv-html-font-plus">A+</button>
+					</div>
+					<div class="wfv-html-findreplace" id="wfv-html-findreplace-row">
+						<input type="text" id="wfv-html-find-input" placeholder="Find…">
+						<input type="text" id="wfv-html-replace-input" placeholder="Replace with…">
+						<button type="button" class="button button-small" id="wfv-html-replace-btn">Replace all</button>
+					</div>
+
+					<div class="wfv-html-panes">
+						<div class="wfv-html-pane">
+							<div class="wfv-html-pane-label">HTML Source</div>
+							<textarea id="wfv-html-source" spellcheck="false"></textarea>
+						</div>
+						<div class="wfv-html-pane">
+							<div class="wfv-html-pane-label">Live Preview</div>
+							<iframe id="wfv-html-preview" sandbox="allow-scripts allow-forms" title="Live preview"></iframe>
+						</div>
+					</div>
+
+					<div style="padding:16px 24px 24px;">
+						<div id="wfv-html-shortcode-wrap" style="display:none;">
+							<div class="wfv-shortcode-box">
+								<code id="wfv-html-shortcode-text"></code>
+								<button type="button" class="button" id="wfv-html-copy-shortcode">Copy shortcode</button>
+							</div>
+						</div>
+
+						<div class="wfv-detail-footer">
+							<button type="button" class="button" id="wfv-html-delete-btn" style="color:#c1272d;display:none;">Delete page</button>
+							<button type="button" class="button button-primary" id="wfv-html-save-btn">Save page</button>
+						</div>
+
+						<form method="post" id="wfv-html-form" style="display:none;">
+							<?php wp_nonce_field( 'wfv_create_html', 'wfv_html_nonce' ); ?>
+							<?php wp_nonce_field( 'wfv_update_html', 'wfv_html_update_nonce' ); ?>
+							<input type="hidden" name="ctx_view" value="html">
+							<input type="hidden" name="ctx_open_id" id="wfv-html-ctx-open-id" value="">
+							<input type="hidden" name="wfv_action" id="wfv-html-form-action" value="create_html">
+							<input type="hidden" name="html_id" id="wfv-html-form-id" value="">
+							<input type="hidden" name="title" id="wfv-html-form-title" value="">
+							<textarea name="html_content" id="wfv-html-form-content" style="display:none;"></textarea>
+						</form>
+						<form method="post" id="wfv-html-delete-form" style="display:none;">
+							<?php wp_nonce_field( 'wfv_delete_html', 'wfv_html_delete_nonce' ); ?>
+							<input type="hidden" name="wfv_action" value="delete_html">
+							<input type="hidden" name="ctx_view" value="html">
+							<input type="hidden" name="html_id" id="wfv-html-delete-id" value="">
+						</form>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="wfv-toast" id="wfv-html-toast"></div>
+
+	<script>
+	(function(){
+		var pagesData = <?php echo wp_json_encode( $pages_data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS ); ?>;
+		var demoHtml  = <?php echo wp_json_encode( $demo_html ); ?>;
+		var siteUrl   = <?php echo wp_json_encode( home_url( '/' ) ); ?>;
+
+		var emptyState = document.getElementById('wfv-html-detail-empty');
+		var content     = document.getElementById('wfv-html-detail-content');
+		var toast       = document.getElementById('wfv-html-toast');
+		var titleField  = document.getElementById('wfv-html-title-field');
+		var source      = document.getElementById('wfv-html-source');
+		var preview     = document.getElementById('wfv-html-preview');
+		var currentId   = null;
+		var bootstrapOn = false;
+
+		function showToast(text){
+			toast.textContent = text;
+			toast.classList.add('wfv-show');
+			setTimeout(function(){ toast.classList.remove('wfv-show'); }, 1800);
+		}
+		function setActiveListItem(id){
+			document.querySelectorAll('.wfv-split-item').forEach(function(el){
+				el.classList.toggle('wfv-item-active', el.dataset.id === String(id));
+			});
+		}
+		function updatePreview(){
+			var html = source.value;
+			if ( bootstrapOn ) {
+				html = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">' + html;
+			}
+			preview.srcdoc = html;
+		}
+		var debounceTimer;
+		source.addEventListener('input', function(){
+			clearTimeout(debounceTimer);
+			debounceTimer = setTimeout(updatePreview, 250);
+		});
+
+		function openCreate(){
+			currentId = null;
+			emptyState.style.display = 'none';
+			content.style.display = '';
+			setActiveListItem(null);
+			titleField.value = '';
+			source.value = '';
+			document.getElementById('wfv-html-delete-btn').style.display = 'none';
+			document.getElementById('wfv-html-shortcode-wrap').style.display = 'none';
+			updatePreview();
+			titleField.focus();
+		}
+		function openPage(id){
+			var data = pagesData[id];
+			if ( ! data ) { return; }
+			currentId = id;
+			emptyState.style.display = 'none';
+			content.style.display = '';
+			setActiveListItem(id);
+			titleField.value = data.title;
+			source.value = data.content;
+			document.getElementById('wfv-html-delete-btn').style.display = '';
+			document.getElementById('wfv-html-shortcode-wrap').style.display = '';
+			document.getElementById('wfv-html-shortcode-text').textContent = '[wfv_html id="' + id + '"]';
+			updatePreview();
+		}
+
+		document.getElementById('wfv-add-html-trigger').addEventListener('click', openCreate);
+		document.querySelectorAll('#wfv-html-list .wfv-split-item').forEach(function(el){
+			el.addEventListener('click', function(){ openPage( el.dataset.id ); });
+		});
+
+		document.getElementById('wfv-html-save-btn').addEventListener('click', function(){
+			var title = titleField.value.trim();
+			if ( ! title ) { showToast('Please add a title first'); titleField.focus(); return; }
+			document.getElementById('wfv-html-form-action').value = currentId ? 'update_html' : 'create_html';
+			document.getElementById('wfv-html-form-id').value = currentId || '';
+			document.getElementById('wfv-html-ctx-open-id').value = currentId || '';
+			document.getElementById('wfv-html-form-title').value = title;
+			document.getElementById('wfv-html-form-content').value = source.value;
+			document.getElementById('wfv-html-form').submit();
+		});
+		document.getElementById('wfv-html-delete-btn').addEventListener('click', function(){
+			if ( ! currentId ) { return; }
+			if ( ! confirm('Delete this page? Any shortcode referencing it will stop working.') ) { return; }
+			document.getElementById('wfv-html-delete-id').value = currentId;
+			document.getElementById('wfv-html-delete-form').submit();
+		});
+		document.getElementById('wfv-html-copy-shortcode').addEventListener('click', function(){
+			var text = document.getElementById('wfv-html-shortcode-text').textContent;
+			if ( navigator.clipboard && navigator.clipboard.writeText ) {
+				navigator.clipboard.writeText(text);
+			} else {
+				var t = document.createElement('textarea');
+				t.value = text; document.body.appendChild(t); t.select();
+				document.execCommand('copy'); document.body.removeChild(t);
+			}
+			showToast('Shortcode copied');
+		});
+
+		// Toolbar: demo, clear, minify, find & replace, color picker, bootstrap toggle, font size.
+		document.getElementById('wfv-html-demo-btn').addEventListener('click', function(){
+			source.value = demoHtml;
+			updatePreview();
+		});
+		document.getElementById('wfv-html-clear-btn').addEventListener('click', function(){
+			if ( source.value && ! confirm('Clear all HTML in the editor?') ) { return; }
+			source.value = '';
+			updatePreview();
+		});
+		document.getElementById('wfv-html-minify-btn').addEventListener('click', function(){
+			source.value = source.value.replace(/\n\s*/g, '').replace(/>\s+</g, '><').trim();
+			updatePreview();
+		});
+		document.getElementById('wfv-html-findreplace-btn').addEventListener('click', function(){
+			var row = document.getElementById('wfv-html-findreplace-row');
+			row.style.display = ( row.style.display === 'none' || ! row.style.display ) ? 'flex' : 'none';
+		});
+		document.getElementById('wfv-html-replace-btn').addEventListener('click', function(){
+			var find = document.getElementById('wfv-html-find-input').value;
+			var replace = document.getElementById('wfv-html-replace-input').value;
+			if ( ! find ) { return; }
+			source.value = source.value.split(find).join(replace);
+			updatePreview();
+		});
+		document.getElementById('wfv-html-color-picker').addEventListener('input', function(e){
+			var hex = e.target.value;
+			var start = source.selectionStart, end = source.selectionEnd;
+			source.value = source.value.slice(0, start) + hex + source.value.slice(end);
+			source.focus();
+			source.selectionStart = source.selectionEnd = start + hex.length;
+			updatePreview();
+		});
+		var bootstrapBtn = document.getElementById('wfv-html-bootstrap-toggle');
+		bootstrapBtn.addEventListener('click', function(){
+			bootstrapOn = ! bootstrapOn;
+			bootstrapBtn.textContent = '🅱 Bootstrap preview: ' + ( bootstrapOn ? 'On' : 'Off' );
+			updatePreview();
+		});
+		var fontSize = 13;
+		document.getElementById('wfv-html-font-plus').addEventListener('click', function(){
+			fontSize = Math.min(22, fontSize + 1);
+			source.style.fontSize = fontSize + 'px';
+		});
+		document.getElementById('wfv-html-font-minus').addEventListener('click', function(){
+			fontSize = Math.max(10, fontSize - 1);
+			source.style.fontSize = fontSize + 'px';
+		});
+
+		// Search.
+		var searchInput = document.getElementById('wfv-html-search');
+		if ( searchInput ) {
+			searchInput.addEventListener('input', function(){
+				var q = this.value.trim().toLowerCase();
+				document.querySelectorAll('#wfv-html-list .wfv-split-item').forEach(function(el){
+					el.style.display = ( ! q || el.dataset.search.indexOf(q) !== -1 ) ? '' : 'none';
+				});
+			});
+		}
+
+		<?php if ( $open_id && isset( $pages_data[ $open_id ] ) ) : ?>
+		openPage( <?php echo (int) $open_id; ?> );
+		<?php endif; ?>
 	})();
 	</script>
 	<?php
