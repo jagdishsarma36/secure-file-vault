@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Secure File Vault
  * Plugin URI: https://github.com/jagdishsarma36/secure-file-vault
- * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links) — all under one unified "Secure Vault" menu with a shared modern design system.
- * Version: 2.2.0
+ * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links), CSV import from LastPass/Google/Bitwarden, and a [wfv_html_editor] shortcode that embeds a live, stateless dual-pane HTML editor anyone can use on the front end — all under one unified "Secure Vault" menu with a shared modern design system.
+ * Version: 2.3.1
  * Author: Jagdish Sarma
  * Author URI: https://github.com/jagdishsarma36
  * License: GPL2
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WFV_VERSION', '2.2.0' );
+define( 'WFV_VERSION', '2.3.1' );
 define( 'WFV_PRIVATE_DIRNAME', 'wfv-private' );
 define( 'WFV_FILE', __FILE__ );
 define( 'WFV_DIR', plugin_dir_path( __FILE__ ) );
@@ -4623,4 +4623,166 @@ function wfv_render_passwords_page() {
 	})();
 	</script>
 	<?php
+}
+
+/**
+ * ------------------------------------------------------------------
+ * HTML Editor — a self-contained, front-end embeddable dual-pane HTML
+ * editor tool, similar in spirit to html5-editor.net. Nothing here is
+ * saved anywhere: it's purely a client-side tool. Drop it into any
+ * post or page with the shortcode below and anyone viewing that page
+ * (no login required) can type HTML on the left and see a live
+ * preview on the right.
+ *
+ * Usage:  [wfv_html_editor]
+ *         [wfv_html_editor height="600" demo="no"]
+ * ------------------------------------------------------------------
+ */
+add_shortcode( 'wfv_html_editor', 'wfv_html_editor_shortcode' );
+function wfv_html_editor_shortcode( $atts ) {
+	static $instance = 0;
+	$instance++;
+
+	$atts = shortcode_atts(
+		array(
+			'height' => '520',
+			'demo'   => 'yes', // preload a demo snippet, or start blank
+		),
+		$atts,
+		'wfv_html_editor'
+	);
+
+	$uid    = 'wfv-h5e-' . $instance . '-' . wp_rand( 1000, 9999 );
+	$height = max( 240, absint( $atts['height'] ) );
+
+	$demo_html = "<section style=\"font-family:sans-serif;padding:40px;text-align:center;background:linear-gradient(135deg,#4f46e5,#3730a3);color:#fff;border-radius:12px;\">\n  <h1 style=\"margin:0 0 10px;\">Hello, world 👋</h1>\n  <p style=\"opacity:.85;\">Edit the HTML on the left — this preview updates live.</p>\n  <button style=\"margin-top:16px;padding:10px 20px;border:0;border-radius:8px;background:#fff;color:#3730a3;font-weight:600;cursor:pointer;\" onclick=\"alert('It works!')\">Click me</button>\n</section>";
+	$starting_value = ( 'no' === strtolower( (string) $atts['demo'] ) ) ? '' : $demo_html;
+
+	ob_start();
+	?>
+	<div id="<?php echo esc_attr( $uid ); ?>" class="wfv-h5e">
+		<style>
+			#<?php echo esc_attr( $uid ); ?> { --wfv-h5e-primary:#4f46e5; --wfv-h5e-primary-dark:#3730a3; --wfv-h5e-border:#e2e8f0; --wfv-h5e-bg:#f8fafc; --wfv-h5e-slate:#475569; --wfv-h5e-muted:#94a3b8;
+				border:1px solid var(--wfv-h5e-border); border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(15,23,42,.06); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar{ display:flex; flex-wrap:wrap; gap:6px; padding:8px 10px; border-bottom:1px solid var(--wfv-h5e-border); background:var(--wfv-h5e-bg); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar button, #<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar input[type=color]{ font-size:11.5px; padding:5px 9px; border-radius:6px; border:1px solid var(--wfv-h5e-border); background:#fff; cursor:pointer; color:var(--wfv-h5e-slate); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar button:hover{ color:var(--wfv-h5e-primary); border-color:var(--wfv-h5e-primary); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar input[type=color]{ padding:2px; width:32px; height:28px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-panes{ display:flex; height:<?php echo (int) $height; ?>px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane{ flex:1; display:flex; flex-direction:column; min-width:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane + .wfv-h5e-pane{ border-left:1px solid var(--wfv-h5e-border); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane-label{ font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--wfv-h5e-muted); padding:6px 10px; background:var(--wfv-h5e-bg); border-bottom:1px solid var(--wfv-h5e-border); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-source{ flex:1; border:0; resize:none; padding:12px; font-family:Consolas,Monaco,'Courier New',monospace; font-size:13px; line-height:1.5; outline:none; width:100%; box-sizing:border-box; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-preview{ flex:1; border:0; width:100%; background:#fff; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-findreplace{ display:none; gap:6px; padding:6px 10px; border-bottom:1px solid var(--wfv-h5e-border); background:#fffbea; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-findreplace input{ font-size:12px; padding:5px 8px; border-radius:6px; border:1px solid var(--wfv-h5e-border); }
+			@media (max-width: 782px) {
+				#<?php echo esc_attr( $uid ); ?> .wfv-h5e-panes{ flex-direction:column; height:auto; }
+				#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane{ height:<?php echo (int) $height; ?>px; }
+			}
+		</style>
+
+		<div class="wfv-h5e-toolbar">
+			<button type="button" data-act="demo">📄 Demo</button>
+			<button type="button" data-act="clear">🗑 Clear</button>
+			<button type="button" data-act="minify">📦 Minify</button>
+			<button type="button" data-act="findreplace">🔍 Find &amp; Replace</button>
+			<input type="color" data-act="color" title="Pick a color, inserts hex at cursor">
+			<button type="button" data-act="bootstrap" title="Preview only">🅱 Bootstrap preview: Off</button>
+			<span style="flex:1;"></span>
+			<button type="button" data-act="font-minus">A−</button>
+			<button type="button" data-act="font-plus">A+</button>
+		</div>
+		<div class="wfv-h5e-findreplace">
+			<input type="text" data-role="find" placeholder="Find…">
+			<input type="text" data-role="replace" placeholder="Replace with…">
+			<button type="button" data-act="replace-all" class="button button-small">Replace all</button>
+		</div>
+
+		<div class="wfv-h5e-panes">
+			<div class="wfv-h5e-pane">
+				<div class="wfv-h5e-pane-label">HTML Source</div>
+				<textarea class="wfv-h5e-source" spellcheck="false"><?php echo esc_textarea( $starting_value ); ?></textarea>
+			</div>
+			<div class="wfv-h5e-pane">
+				<div class="wfv-h5e-pane-label">Live Preview</div>
+				<iframe class="wfv-h5e-preview" sandbox="allow-scripts allow-forms" title="Live preview"></iframe>
+			</div>
+		</div>
+	</div>
+
+	<script>
+	(function(){
+		var root = document.getElementById(<?php echo wp_json_encode( $uid ); ?>);
+		if ( ! root || root.dataset.wfvInit ) { return; }
+		root.dataset.wfvInit = '1';
+
+		var demoHtml   = <?php echo wp_json_encode( $demo_html ); ?>;
+		var source     = root.querySelector('.wfv-h5e-source');
+		var preview    = root.querySelector('.wfv-h5e-preview');
+		var findRow    = root.querySelector('.wfv-h5e-findreplace');
+		var bootstrapOn = false;
+		var fontSize    = 13;
+
+		function updatePreview(){
+			var html = source.value;
+			if ( bootstrapOn ) {
+				html = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">' + html;
+			}
+			preview.srcdoc = html;
+		}
+		var debounceTimer;
+		source.addEventListener('input', function(){
+			clearTimeout(debounceTimer);
+			debounceTimer = setTimeout(updatePreview, 250);
+		});
+		updatePreview();
+
+		root.querySelectorAll('[data-act]').forEach(function(btn){
+			btn.addEventListener('click', function(){
+				var act = btn.dataset.act;
+				if ( 'demo' === act ) {
+					source.value = demoHtml;
+					updatePreview();
+				} else if ( 'clear' === act ) {
+					if ( source.value && ! confirm('Clear all HTML in the editor?') ) { return; }
+					source.value = '';
+					updatePreview();
+				} else if ( 'minify' === act ) {
+					source.value = source.value.replace(/\n\s*/g, '').replace(/>\s+</g, '><').trim();
+					updatePreview();
+				} else if ( 'findreplace' === act ) {
+					findRow.style.display = ( findRow.style.display === 'flex' ) ? 'none' : 'flex';
+				} else if ( 'replace-all' === act ) {
+					var find = findRow.querySelector('[data-role="find"]').value;
+					var replace = findRow.querySelector('[data-role="replace"]').value;
+					if ( ! find ) { return; }
+					source.value = source.value.split(find).join(replace);
+					updatePreview();
+				} else if ( 'bootstrap' === act ) {
+					bootstrapOn = ! bootstrapOn;
+					btn.textContent = '🅱 Bootstrap preview: ' + ( bootstrapOn ? 'On' : 'Off' );
+					updatePreview();
+				} else if ( 'font-plus' === act ) {
+					fontSize = Math.min(22, fontSize + 1);
+					source.style.fontSize = fontSize + 'px';
+				} else if ( 'font-minus' === act ) {
+					fontSize = Math.max(10, fontSize - 1);
+					source.style.fontSize = fontSize + 'px';
+				}
+			});
+		});
+
+		root.querySelector('[data-act="color"]').addEventListener('input', function(e){
+			var hex = e.target.value;
+			var start = source.selectionStart, end = source.selectionEnd;
+			source.value = source.value.slice(0, start) + hex + source.value.slice(end);
+			source.focus();
+			source.selectionStart = source.selectionEnd = start + hex.length;
+			updatePreview();
+		});
+	})();
+	</script>
+	<?php
+	return ob_get_clean();
 }

@@ -4,11 +4,11 @@ Tags: file sharing, password manager, notes, private files, security
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.2.0
+Stable tag: 2.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Private file storage with Drive-style folders, a LastPass-style notes and password manager, and revocable share links — all self-hosted inside your own WordPress site.
+Private file storage with Drive-style folders, a LastPass-style notes and password manager, CSV import, an HTML editor with shortcode embedding, and revocable share links — all self-hosted inside your own WordPress site.
 
 == Description ==
 
@@ -38,6 +38,14 @@ Private file storage with Drive-style folders, a LastPass-style notes and passwo
 * Built-in password generator and strength meter
 * Import from **LastPass**, **Google Password Manager**, or **Bitwarden** CSV exports, or a generic CSV — auto-detected by format, with logins and secure notes routed to the right place automatically
 * No admin override, anywhere — password entries are private to their owner even from site administrators
+
+= HTML Editor =
+
+* A dual-pane composer — HTML source on the left, a live preview on the right, similar in spirit to html5-editor.net
+* Nothing is saved anywhere on the server — it's a pure front-end tool. Drop `[wfv_html_editor]` into any post or page and anyone viewing it (no login required) gets a working live editor in their browser
+* Demo content, one-click minify, find & replace, a color picker, adjustable font size, and an optional Bootstrap CDN toggle for previewing
+* Optional shortcode attributes: `[wfv_html_editor height="600" demo="no"]`
+* Place it multiple times on the same page — each instance runs independently
 
 = Auto-updates =
 
@@ -84,6 +92,10 @@ It checks the GitHub repo's latest release (or tag, if no release is published) 
 
 Yes — from either the Notes or Passwords screen, use "⬆ Import from CSV". It auto-detects LastPass, Google Password Manager, and Bitwarden export formats, plus a generic `title,username,password,url,notes,tags` CSV. Bitwarden and LastPass exports that mix logins and secure notes in one file are split automatically — logins go to Passwords, notes go to Notes. Delete the original export file from your computer after importing, since it contains plaintext passwords.
 
+= Does the HTML Editor save anything on the server? =
+
+No. It's purely a front-end tool — nothing is written to your database or filesystem. Anyone viewing a page with `[wfv_html_editor]` gets a live, working editor in their own browser; if they navigate away, whatever they typed is gone, same as the reference tool it's modeled on. There's no login requirement and no admin screen for it — it's just the shortcode.
+
 == Screenshots ==
 
 1. Files — folders with color tags and starring
@@ -91,6 +103,12 @@ Yes — from either the Notes or Passwords screen, use "⬆ Import from CSV". It
 3. Passwords — the same layout, with reveal/copy/generate and a master-password lock screen
 
 == Changelog ==
+
+= 2.3.1 =
+* Changed: the HTML Editor is now a pure, stateless front-end tool — `[wfv_html_editor]` embeds a live dual-pane editor directly, usable by any visitor without login, with nothing saved to the database. (Corrects 2.3.0, which mistakenly added server-side storage and an admin management screen for something that was only ever meant to be a client-side tool.)
+
+= 2.3.0 =
+* Added: HTML Editor — a dual-pane HTML source/live-preview composer (demo content, minify, find & replace, color picker, Bootstrap preview toggle).
 
 = 2.2.0 =
 * Added: CSV import for Passwords and Notes, from LastPass, Google Password Manager, or Bitwarden exports (auto-detected), or a generic CSV. Mixed exports (Bitwarden/LastPass secure notes alongside logins) are automatically split between the two modules.
@@ -135,6 +153,9 @@ Yes — from either the Notes or Passwords screen, use "⬆ Import from CSV". It
 * Initial release: private file storage with per-recipient revocable share links (optional password, expiry, download limit)
 
 == Upgrade Notice ==
+
+= 2.3.1 =
+Fixes the HTML Editor to work as intended: `[wfv_html_editor]` is now a stateless, front-end-only live editor with nothing saved server-side.
 
 = 2.1.0 =
 Adds auto-updates via GitHub and fixes a bug where editing a second note in a row could show the previous note's content in the editor. Recommended for all users.
