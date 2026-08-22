@@ -4,7 +4,7 @@ Tags: file sharing, password manager, notes, private files, security
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.3.1
+Stable tag: 2.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -41,11 +41,23 @@ Private file storage with Drive-style folders, a LastPass-style notes and passwo
 
 = HTML Editor =
 
-* A dual-pane composer — HTML source on the left, a live preview on the right, similar in spirit to html5-editor.net
+* A professional, IDE-style dual-pane composer — a real syntax-highlighted code editor (CodeMirror, with line numbers, bracket matching, and auto-closing tags) on the left, a directly-editable visual preview on the right, similar in spirit to html5-editor.net
+* Full formatting toolbar with icon buttons, on the preview side: Bold, Italic, Underline, Strikethrough, heading styles (H1–H4), blockquote, code block, bullet/numbered lists, indent/outdent, alignment, links, images, horizontal rule, clear formatting, undo/redo — edits there sync back into the raw HTML automatically
+* Device-width preview toggle (desktop / tablet / mobile) to check responsive layouts at a glance
 * Nothing is saved anywhere on the server — it's a pure front-end tool. Drop `[wfv_html_editor]` into any post or page and anyone viewing it (no login required) gets a working live editor in their browser
 * Demo content, one-click minify, find & replace, a color picker, adjustable font size, and an optional Bootstrap CDN toggle for previewing
 * Optional shortcode attributes: `[wfv_html_editor height="600" demo="no"]`
 * Place it multiple times on the same page — each instance runs independently
+* Loads CodeMirror from a CDN (only once per page, however many times the shortcode is used) — the only external dependency anywhere in this plugin, scoped to this one optional tool
+
+= Sticky Notes =
+
+* A Post-it-style note board embeddable anywhere with `[wfv_sticky_notes]` — no admin setup required
+* **Signed-in visitors**: notes save to the database and follow them across devices, private to that person (no admin bypass)
+* **Signed-out visitors**: notes save only in that browser's `localStorage` — nothing touches the server, and the notes won't appear on another device or browser (the widget shows which mode is active)
+* Basic formatting when writing a note — Bold, Italic, Underline, Strikethrough, bullet/numbered lists, and links — restricted to a small safe tag allow-list enforced both server-side and client-side, so formatting never becomes a way to inject scripts or arbitrary markup
+* Pin notes to keep them on top, set a priority (Low/Medium/High, color-coded), and filter the board by All / Pinned / High / Medium / Low
+* The note listing has a fixed, scrollable height (`[wfv_sticky_notes height="480"]` to customize) so the widget doesn't keep growing taller as notes pile up
 
 = Auto-updates =
 
@@ -82,7 +94,7 @@ Admins can see everyone's **files** (useful for team/site oversight). They **can
 
 = Does this require any external services? =
 
-No. Everything — file storage, encryption, the rich-text editor, password generation — runs on your own server using WordPress's built-in APIs. The only outbound connection is the optional GitHub update check.
+Almost nothing does. Files, Notes, Passwords, encryption, and the Notes rich-text editor all run entirely on your own server using WordPress's built-in APIs — no external calls. The two exceptions: the optional GitHub update check, and the HTML Editor's code pane, which loads the CodeMirror library from a CDN (cdnjs.cloudflare.com) only on pages where you've placed the `[wfv_html_editor]` shortcode. If you don't use that shortcode, that request never happens.
 
 = How does the GitHub updater work? =
 
@@ -96,6 +108,10 @@ Yes — from either the Notes or Passwords screen, use "⬆ Import from CSV". It
 
 No. It's purely a front-end tool — nothing is written to your database or filesystem. Anyone viewing a page with `[wfv_html_editor]` gets a live, working editor in their own browser; if they navigate away, whatever they typed is gone, same as the reference tool it's modeled on. There's no login requirement and no admin screen for it — it's just the shortcode.
 
+= Where do Sticky Notes get saved? =
+
+It depends on whether the visitor is logged in. Logged-in visitors get their notes saved to the database, tied to their account, so they show up on any device. Signed-out visitors get their notes saved only in that one browser's `localStorage` — nothing is sent to the server, but that also means the notes won't follow them to another browser or device, and clearing browser data will erase them. The widget always shows a small badge telling you which mode is active.
+
 == Screenshots ==
 
 1. Files — folders with color tags and starring
@@ -103,6 +119,20 @@ No. It's purely a front-end tool — nothing is written to your database or file
 3. Passwords — the same layout, with reveal/copy/generate and a master-password lock screen
 
 == Changelog ==
+
+= 2.6.0 =
+* Added: a formatting toolbar to Sticky Notes (Bold, Italic, Underline, Strikethrough, lists, links) — restricted to a safe tag allow-list enforced both server-side (wp_kses) and client-side (for localStorage-only notes, which never reach the server).
+* Changed: the note listing now has a fixed, scrollable height instead of growing indefinitely as notes are added — customizable via `[wfv_sticky_notes height="480"]`.
+
+= 2.5.0 =
+* Fixed: the HTML Editor's formatting toolbar (Bold, Italic, headings, lists, links, etc.) wasn't responding to clicks at all — a CSS selector bug meant no click listeners were ever attached to it. All formatting buttons now work correctly.
+* Added: Sticky Notes — a new `[wfv_sticky_notes]` shortcode for a pin/priority/filter note board, embeddable on any page. Saves to the database for logged-in visitors, or to browser localStorage for anonymous ones.
+
+= 2.4.0 =
+* Changed: the HTML Editor now looks and feels like a professional dev tool — a real syntax-highlighted code editor (CodeMirror, dark theme, line numbers, bracket matching, auto-closing tags) replaces the plain textarea, the emoji toolbar was replaced with a clean SVG icon toolbar, and a desktop/tablet/mobile device-width preview toggle was added.
+
+= 2.3.2 =
+* Added: a real formatting toolbar to the HTML Editor — Bold, Italic, Underline, headings, lists, blockquote, alignment, links, images, and more, applied directly in the visual preview and synced back into the raw HTML source automatically.
 
 = 2.3.1 =
 * Changed: the HTML Editor is now a pure, stateless front-end tool — `[wfv_html_editor]` embeds a live dual-pane editor directly, usable by any visitor without login, with nothing saved to the database. (Corrects 2.3.0, which mistakenly added server-side storage and an admin management screen for something that was only ever meant to be a client-side tool.)
@@ -153,6 +183,18 @@ No. It's purely a front-end tool — nothing is written to your database or file
 * Initial release: private file storage with per-recipient revocable share links (optional password, expiry, download limit)
 
 == Upgrade Notice ==
+
+= 2.6.0 =
+Sticky Notes now support basic formatting (bold, lists, links) and the note listing scrolls within a fixed height instead of growing indefinitely.
+
+= 2.5.0 =
+Fixes a bug where the HTML Editor's formatting toolbar didn't respond to clicks at all. Also adds Sticky Notes, a new pin/priority/filter note board shortcode. Recommended for all users of the HTML Editor.
+
+= 2.4.0 =
+The HTML Editor now has a real syntax-highlighted code editor, a clean icon toolbar, and a device-width preview toggle — a full visual upgrade.
+
+= 2.3.2 =
+Adds a proper formatting toolbar (Bold, headings, lists, links, etc.) to the HTML Editor's visual preview.
 
 = 2.3.1 =
 Fixes the HTML Editor to work as intended: `[wfv_html_editor]` is now a stateless, front-end-only live editor with nothing saved server-side.

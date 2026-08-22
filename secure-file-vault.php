@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Secure File Vault
  * Plugin URI: https://github.com/jagdishsarma36/secure-file-vault
- * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links), CSV import from LastPass/Google/Bitwarden, and a [wfv_html_editor] shortcode that embeds a live, stateless dual-pane HTML editor anyone can use on the front end — all under one unified "Secure Vault" menu with a shared modern design system.
- * Version: 2.3.1
+ * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links), CSV import from LastPass/Google/Bitwarden, a [wfv_html_editor] shortcode that embeds a live, stateless dual-pane HTML editor anyone can use on the front end, and a [wfv_sticky_notes] shortcode for a pin/priority/filter note board that saves to the database when logged in or to the browser otherwise — all under one unified "Secure Vault" menu with a shared modern design system.
+ * Version: 2.6.0
  * Author: Jagdish Sarma
  * Author URI: https://github.com/jagdishsarma36
  * License: GPL2
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WFV_VERSION', '2.3.1' );
+define( 'WFV_VERSION', '2.6.0' );
 define( 'WFV_PRIVATE_DIRNAME', 'wfv-private' );
 define( 'WFV_FILE', __FILE__ );
 define( 'WFV_DIR', plugin_dir_path( __FILE__ ) );
@@ -60,6 +60,7 @@ function wfv_install_schema() {
 	$passwords_table       = $wpdb->prefix . 'wfv_passwords';
 	$pw_user_shares_table  = $wpdb->prefix . 'wfv_password_user_shares';
 	$pw_link_shares_table  = $wpdb->prefix . 'wfv_password_link_shares';
+	$sticky_table          = $wpdb->prefix . 'wfv_sticky_notes';
 
 	$sql = "CREATE TABLE {$files_table} (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -174,6 +175,19 @@ function wfv_install_schema() {
 		PRIMARY KEY  (id),
 		UNIQUE KEY token (token),
 		KEY created_by (created_by)
+	) {$charset_collate};
+
+	CREATE TABLE {$sticky_table} (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		content TEXT NOT NULL,
+		priority VARCHAR(10) NOT NULL DEFAULT 'medium',
+		pinned TINYINT(1) NOT NULL DEFAULT 0,
+		sort_order INT NOT NULL DEFAULT 0,
+		created_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL,
+		PRIMARY KEY  (id),
+		KEY created_by (created_by)
 	) {$charset_collate};";
 
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -248,6 +262,10 @@ function wfv_password_user_shares_table() {
 function wfv_password_link_shares_table() {
 	global $wpdb;
 	return $wpdb->prefix . 'wfv_password_link_shares';
+}
+function wfv_sticky_notes_table() {
+	global $wpdb;
+	return $wpdb->prefix . 'wfv_sticky_notes';
 }
 
 /**
@@ -819,6 +837,17 @@ function wfv_user_can_manage_note( $note ) {
 	}
 	if ( current_user_can( 'manage_options' ) ) {
 		return true;
+	}
+	return is_user_logged_in() && (int) $note->created_by === get_current_user_id();
+}
+
+/**
+ * True if the current user may manage this sticky note. No admin bypass —
+ * these are quick personal notes, strictly private to whoever created them.
+ */
+function wfv_user_can_manage_sticky_note( $note ) {
+	if ( ! $note ) {
+		return false;
 	}
 	return is_user_logged_in() && (int) $note->created_by === get_current_user_id();
 }
@@ -1876,6 +1905,179 @@ function wfv_ajax_reorder_notes() {
 	}
 
 	wp_send_json_success();
+}
+
+/**
+ * ------------------------------------------------------------------
+ * Sticky Notes — a front-end embeddable note board ([wfv_sticky_notes]).
+ * Logged-in visitors get these AJAX endpoints backing a small database
+ * table; signed-out visitors never call any of this — their notes live
+ * entirely in the browser's localStorage instead (see the shortcode).
+ * Notes here are plain text only (no rich HTML), strictly private to
+ * whoever created them, with no admin bypass.
+ * ------------------------------------------------------------------
+ */
+function wfv_sticky_note_to_array( $n ) {
+	return array(
+		'id'         => (int) $n->id,
+		'content'    => (string) $n->content,
+		'priority'   => (string) $n->priority,
+		'pinned'     => (bool) $n->pinned,
+		'updated_at' => mysql2date( 'c', $n->updated_at ),
+	);
+}
+
+function wfv_sanitize_sticky_priority( $priority ) {
+	$priority = sanitize_key( (string) $priority );
+	return in_array( $priority, array( 'low', 'medium', 'high' ), true ) ? $priority : 'medium';
+}
+
+/**
+ * Small, deliberately restricted formatting set for sticky notes — enough
+ * for quick emphasis (bold/italic/underline/strike), simple lists, and
+ * links, nothing that could carry a script or layout-breaking markup. The
+ * client-side composer mirrors this exact allow-list (see the shortcode's
+ * JS sanitizeStickyHtml()) so localStorage-only notes get the same
+ * protection even though they never pass through this server-side pass.
+ */
+function wfv_sticky_allowed_tags() {
+	return array(
+		'b'      => array(),
+		'strong' => array(),
+		'i'      => array(),
+		'em'     => array(),
+		'u'      => array(),
+		's'      => array(),
+		'strike' => array(),
+		'br'     => array(),
+		'p'      => array(),
+		'ul'     => array(),
+		'ol'     => array(),
+		'li'     => array(),
+		'a'      => array(
+			'href'   => true,
+			'target' => true,
+			'rel'    => true,
+		),
+	);
+}
+
+function wfv_sanitize_sticky_content( $html ) {
+	$html = wp_kses( (string) $html, wfv_sticky_allowed_tags() );
+	// Force safe attributes on any link rather than trusting whatever the editor produced.
+	$html = preg_replace_callback(
+		'/<a\s+[^>]*href="([^"]*)"[^>]*>/i',
+		function ( $m ) {
+			$href = esc_url( $m[1] );
+			return '<a href="' . $href . '" target="_blank" rel="noopener noreferrer">';
+		},
+		$html
+	);
+	return trim( $html );
+}
+
+add_action( 'wp_ajax_wfv_sticky_list', 'wfv_ajax_sticky_list' );
+function wfv_ajax_sticky_list() {
+	if ( ! wfv_user_has_access() ) {
+		wp_send_json_error( 'no_access', 403 );
+	}
+	check_ajax_referer( 'wfv_sticky_notes', 'nonce' );
+
+	global $wpdb;
+	$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM " . wfv_sticky_notes_table() . " WHERE created_by = %d ORDER BY pinned DESC, sort_order ASC, id DESC", get_current_user_id() ) );
+
+	wp_send_json_success( array_map( 'wfv_sticky_note_to_array', $rows ) );
+}
+
+add_action( 'wp_ajax_wfv_sticky_save', 'wfv_ajax_sticky_save' );
+function wfv_ajax_sticky_save() {
+	if ( ! wfv_user_has_access() ) {
+		wp_send_json_error( 'no_access', 403 );
+	}
+	check_ajax_referer( 'wfv_sticky_notes', 'nonce' );
+
+	global $wpdb;
+	$id       = isset( $_POST['id'] ) ? absint( $_POST['id'] ) : 0;
+	$content  = isset( $_POST['content'] ) ? wfv_sanitize_sticky_content( wp_unslash( $_POST['content'] ) ) : '';
+	$priority = wfv_sanitize_sticky_priority( isset( $_POST['priority'] ) ? $_POST['priority'] : 'medium' );
+
+	if ( '' === trim( wp_strip_all_tags( $content ) ) ) {
+		wp_send_json_error( 'empty_content', 400 );
+	}
+
+	if ( $id ) {
+		$existing = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . wfv_sticky_notes_table() . " WHERE id = %d", $id ) );
+		if ( ! wfv_user_can_manage_sticky_note( $existing ) ) {
+			wp_send_json_error( 'forbidden', 403 );
+		}
+		$wpdb->update(
+			wfv_sticky_notes_table(),
+			array(
+				'content'    => $content,
+				'priority'   => $priority,
+				'updated_at' => current_time( 'mysql' ),
+			),
+			array( 'id' => $id ),
+			array( '%s', '%s', '%s' ),
+			array( '%d' )
+		);
+	} else {
+		$wpdb->insert(
+			wfv_sticky_notes_table(),
+			array(
+				'content'    => $content,
+				'priority'   => $priority,
+				'pinned'     => 0,
+				'sort_order' => 0,
+				'created_by' => get_current_user_id(),
+				'created_at' => current_time( 'mysql' ),
+				'updated_at' => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%d', '%d', '%d', '%s', '%s' )
+		);
+		$id = (int) $wpdb->insert_id;
+	}
+
+	$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . wfv_sticky_notes_table() . " WHERE id = %d", $id ) );
+	wp_send_json_success( wfv_sticky_note_to_array( $row ) );
+}
+
+add_action( 'wp_ajax_wfv_sticky_delete', 'wfv_ajax_sticky_delete' );
+function wfv_ajax_sticky_delete() {
+	if ( ! wfv_user_has_access() ) {
+		wp_send_json_error( 'no_access', 403 );
+	}
+	check_ajax_referer( 'wfv_sticky_notes', 'nonce' );
+
+	global $wpdb;
+	$id  = isset( $_POST['id'] ) ? absint( $_POST['id'] ) : 0;
+	$row = $id ? $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . wfv_sticky_notes_table() . " WHERE id = %d", $id ) ) : null;
+
+	if ( ! wfv_user_can_manage_sticky_note( $row ) ) {
+		wp_send_json_error( 'forbidden', 403 );
+	}
+	$wpdb->delete( wfv_sticky_notes_table(), array( 'id' => $id ), array( '%d' ) );
+	wp_send_json_success();
+}
+
+add_action( 'wp_ajax_wfv_sticky_toggle_pin', 'wfv_ajax_sticky_toggle_pin' );
+function wfv_ajax_sticky_toggle_pin() {
+	if ( ! wfv_user_has_access() ) {
+		wp_send_json_error( 'no_access', 403 );
+	}
+	check_ajax_referer( 'wfv_sticky_notes', 'nonce' );
+
+	global $wpdb;
+	$id  = isset( $_POST['id'] ) ? absint( $_POST['id'] ) : 0;
+	$row = $id ? $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . wfv_sticky_notes_table() . " WHERE id = %d", $id ) ) : null;
+
+	if ( ! wfv_user_can_manage_sticky_note( $row ) ) {
+		wp_send_json_error( 'forbidden', 403 );
+	}
+	$wpdb->update( wfv_sticky_notes_table(), array( 'pinned' => $row->pinned ? 0 : 1 ), array( 'id' => $id ), array( '%d' ), array( '%d' ) );
+
+	$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . wfv_sticky_notes_table() . " WHERE id = %d", $id ) );
+	wp_send_json_success( wfv_sticky_note_to_array( $row ) );
 }
 
 /**
@@ -4629,18 +4831,57 @@ function wfv_render_passwords_page() {
  * ------------------------------------------------------------------
  * HTML Editor — a self-contained, front-end embeddable dual-pane HTML
  * editor tool, similar in spirit to html5-editor.net. Nothing here is
- * saved anywhere: it's purely a client-side tool. Drop it into any
- * post or page with the shortcode below and anyone viewing that page
- * (no login required) can type HTML on the left and see a live
- * preview on the right.
+ * saved anywhere: it's purely a client-side tool. The left pane is a
+ * real code editor (CodeMirror, loaded from a CDN) with syntax
+ * highlighting and line numbers; the right pane is a live,
+ * directly-editable preview with a formatting toolbar. The two stay
+ * in sync in both directions. No login required.
  *
  * Usage:  [wfv_html_editor]
  *         [wfv_html_editor height="600" demo="no"]
  * ------------------------------------------------------------------
  */
+function wfv_h5e_icon( $name ) {
+	$icons = array(
+		'bold'        => '<path d="M6 4h6a4 4 0 0 1 0 8H6z"/><path d="M6 12h7a4 4 0 0 1 0 8H6z"/>',
+		'italic'      => '<line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/>',
+		'underline'   => '<path d="M6 3v7a6 6 0 0 0 12 0V3"/><line x1="4" y1="21" x2="20" y2="21"/>',
+		'strike'      => '<line x1="4" y1="12" x2="20" y2="12"/><path d="M16 6c-1-1.3-2.7-2-5-2-3 0-5 1.3-5 3.2 0 1.6 1.3 2.4 3 2.8"/><path d="M8 18c1 1.3 2.7 2 5 2 3 0 5-1.3 5-3.2 0-1.6-1.3-2.4-3-2.8"/>',
+		'list-bullet' => '<circle cx="5" cy="6" r="1.3"/><line x1="9" y1="6" x2="20" y2="6"/><circle cx="5" cy="12" r="1.3"/><line x1="9" y1="12" x2="20" y2="12"/><circle cx="5" cy="18" r="1.3"/><line x1="9" y1="18" x2="20" y2="18"/>',
+		'list-number' => '<text x="1" y="8.5" font-size="7" stroke="none" fill="currentColor">1</text><line x1="9" y1="6" x2="20" y2="6"/><text x="1" y="14.5" font-size="7" stroke="none" fill="currentColor">2</text><line x1="9" y1="12" x2="20" y2="12"/><text x="1" y="20.5" font-size="7" stroke="none" fill="currentColor">3</text><line x1="9" y1="18" x2="20" y2="18"/>',
+		'indent'      => '<polyline points="7,8 11,12 7,16"/><line x1="14" y1="6" x2="20" y2="6"/><line x1="14" y1="12" x2="20" y2="12"/><line x1="14" y1="18" x2="20" y2="18"/>',
+		'outdent'     => '<polyline points="11,8 7,12 11,16"/><line x1="14" y1="6" x2="20" y2="6"/><line x1="14" y1="12" x2="20" y2="12"/><line x1="14" y1="18" x2="20" y2="18"/>',
+		'align-left'  => '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/>',
+		'align-center'=> '<line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="5" y1="18" x2="19" y2="18"/>',
+		'align-right' => '<line x1="4" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="6" y1="18" x2="20" y2="18"/>',
+		'link'        => '<path d="M9 15l6-6"/><path d="M11 6l.8-.8a3 3 0 0 1 4.2 4.2l-.8.8"/><path d="M13 18l-.8.8a3 3 0 0 1-4.2-4.2l.8-.8"/>',
+		'unlink'      => '<path d="M9 15l2-2"/><path d="M11 6l.8-.8a3 3 0 0 1 4.2 4.2l-.8.8"/><path d="M13 18l-.8.8a3 3 0 0 1-4.2-4.2l.8-.8"/><line x1="4" y1="4" x2="20" y2="20"/>',
+		'image'       => '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><polyline points="21,15 15,9 6,20"/>',
+		'hr'          => '<line x1="4" y1="12" x2="20" y2="12"/>',
+		'eraser'      => '<path d="M16 3l5 5-9.5 9.5H6L3 14.5 12.5 5z"/><line x1="6" y1="17.5" x2="10" y2="21.5"/><line x1="10" y1="21" x2="21" y2="21"/>',
+		'undo'        => '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+		'redo'        => '<path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
+		'search'      => '<circle cx="10" cy="10" r="6"/><line x1="15" y1="15" x2="20" y2="20"/>',
+		'droplet'     => '<path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/>',
+		'file'        => '<path d="M6 2h8l4 4v16H6z"/><polyline points="14,2 14,6 18,6"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/>',
+		'trash'       => '<polyline points="4,7 20,7"/><path d="M6 7l1 14h10l1-14"/><path d="M9 7V4h6v3"/>',
+		'package'     => '<path d="M3 8l9-5 9 5-9 5-9-5z"/><path d="M3 8v9l9 5 9-5V8"/><line x1="12" y1="13" x2="12" y2="22"/>',
+		'monitor'     => '<rect x="2" y="4" width="20" height="13" rx="1"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
+		'tablet'      => '<rect x="6" y="2" width="12" height="20" rx="2"/><line x1="11" y1="19" x2="13" y2="19"/>',
+		'smartphone'  => '<rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>',
+		'minus'       => '<line x1="4" y1="12" x2="20" y2="12"/>',
+		'plus'        => '<line x1="12" y1="4" x2="12" y2="20"/><line x1="4" y1="12" x2="20" y2="12"/>',
+	);
+	if ( ! isset( $icons[ $name ] ) ) {
+		return '';
+	}
+	return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' . $icons[ $name ] . '</svg>';
+}
+
 add_shortcode( 'wfv_html_editor', 'wfv_html_editor_shortcode' );
 function wfv_html_editor_shortcode( $atts ) {
-	static $instance = 0;
+	static $instance     = 0;
+	static $assets_done  = false;
 	$instance++;
 
 	$atts = shortcode_atts(
@@ -4655,43 +4896,131 @@ function wfv_html_editor_shortcode( $atts ) {
 	$uid    = 'wfv-h5e-' . $instance . '-' . wp_rand( 1000, 9999 );
 	$height = max( 240, absint( $atts['height'] ) );
 
-	$demo_html = "<section style=\"font-family:sans-serif;padding:40px;text-align:center;background:linear-gradient(135deg,#4f46e5,#3730a3);color:#fff;border-radius:12px;\">\n  <h1 style=\"margin:0 0 10px;\">Hello, world 👋</h1>\n  <p style=\"opacity:.85;\">Edit the HTML on the left — this preview updates live.</p>\n  <button style=\"margin-top:16px;padding:10px 20px;border:0;border-radius:8px;background:#fff;color:#3730a3;font-weight:600;cursor:pointer;\" onclick=\"alert('It works!')\">Click me</button>\n</section>";
+	$demo_html = "<section style=\"font-family:sans-serif;padding:40px;text-align:center;background:linear-gradient(135deg,#4f46e5,#3730a3);color:#fff;border-radius:12px;\">\n  <h1>Hello, world 👋</h1>\n  <p>Edit visually on the right using the toolbar, or edit code on the left — they stay in sync.</p>\n  <ul style=\"text-align:left;display:inline-block;\">\n    <li>Try <strong>Bold</strong> or <em>Italic</em></li>\n    <li>Pick a heading style</li>\n    <li>Add a bullet list like this one</li>\n  </ul>\n</section>";
 	$starting_value = ( 'no' === strtolower( (string) $atts['demo'] ) ) ? '' : $demo_html;
 
 	ob_start();
+
+	// Load CodeMirror (syntax-highlighted code editor) from a CDN, once per page no matter how many times the shortcode is used.
+	if ( ! $assets_done ) :
+		$assets_done = true;
+		?>
+		<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+		<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closetag.min.js"></script>
+		<?php
+	endif;
 	?>
 	<div id="<?php echo esc_attr( $uid ); ?>" class="wfv-h5e">
 		<style>
-			#<?php echo esc_attr( $uid ); ?> { --wfv-h5e-primary:#4f46e5; --wfv-h5e-primary-dark:#3730a3; --wfv-h5e-border:#e2e8f0; --wfv-h5e-bg:#f8fafc; --wfv-h5e-slate:#475569; --wfv-h5e-muted:#94a3b8;
-				border:1px solid var(--wfv-h5e-border); border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(15,23,42,.06); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar{ display:flex; flex-wrap:wrap; gap:6px; padding:8px 10px; border-bottom:1px solid var(--wfv-h5e-border); background:var(--wfv-h5e-bg); }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar button, #<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar input[type=color]{ font-size:11.5px; padding:5px 9px; border-radius:6px; border:1px solid var(--wfv-h5e-border); background:#fff; cursor:pointer; color:var(--wfv-h5e-slate); }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar button:hover{ color:var(--wfv-h5e-primary); border-color:var(--wfv-h5e-primary); }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar input[type=color]{ padding:2px; width:32px; height:28px; }
+			#<?php echo esc_attr( $uid ); ?> { --wfv-ink:#0f172a; --wfv-primary:#6366f1; --wfv-primary-dark:#4f46e5; --wfv-border:#e2e8f0; --wfv-bg:#f8fafc; --wfv-slate:#475569; --wfv-muted:#94a3b8;
+				border:1px solid var(--wfv-border); border-radius:14px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04), 0 12px 32px rgba(15,23,42,.06); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; background:#fff; }
+			#<?php echo esc_attr( $uid ); ?> *{ box-sizing:border-box; }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar{ display:flex; flex-wrap:wrap; align-items:center; gap:3px; padding:7px 10px; border-bottom:1px solid var(--wfv-border); background:#fff; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-sep{ width:1px; height:20px; background:var(--wfv-border); margin:0 5px; flex-shrink:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar button{ display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; padding:0; border-radius:7px; border:1px solid transparent; background:none; cursor:pointer; color:var(--wfv-slate); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar button svg{ width:16px; height:16px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar button:hover{ background:var(--wfv-bg); color:var(--wfv-primary-dark); border-color:var(--wfv-border); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar button.wfv-h5e-wide{ width:auto; padding:0 10px; gap:6px; font-size:12.5px; font-weight:500; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar select{ height:30px; padding:0 8px; border-radius:7px; border:1px solid var(--wfv-border); background:#fff; color:var(--wfv-slate); font-size:12.5px; cursor:pointer; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar input[type=color]{ width:30px; height:30px; padding:3px; border-radius:7px; border:1px solid var(--wfv-border); cursor:pointer; background:#fff; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar-code{ background:#1e1e2e; border-bottom-color:#2d2d44; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar-code button{ color:#a6adc8; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar-code button:hover{ background:#2d2d44; color:#fff; border-color:transparent; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar-code .wfv-h5e-sep{ background:#2d2d44; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-toolbar-code input[type=color]{ border-color:#2d2d44; }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-findreplace{ display:none; align-items:center; gap:6px; padding:8px 10px; border-bottom:1px solid var(--wfv-border); background:#fffbeb; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-findreplace input{ font-size:12.5px; padding:5px 9px; border-radius:6px; border:1px solid var(--wfv-border); }
+
 			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-panes{ display:flex; height:<?php echo (int) $height; ?>px; }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane{ flex:1; display:flex; flex-direction:column; min-width:0; }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane + .wfv-h5e-pane{ border-left:1px solid var(--wfv-h5e-border); }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane-label{ font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--wfv-h5e-muted); padding:6px 10px; background:var(--wfv-h5e-bg); border-bottom:1px solid var(--wfv-h5e-border); }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-source{ flex:1; border:0; resize:none; padding:12px; font-family:Consolas,Monaco,'Courier New',monospace; font-size:13px; line-height:1.5; outline:none; width:100%; box-sizing:border-box; }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-preview{ flex:1; border:0; width:100%; background:#fff; }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-findreplace{ display:none; gap:6px; padding:6px 10px; border-bottom:1px solid var(--wfv-h5e-border); background:#fffbea; }
-			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-findreplace input{ font-size:12px; padding:5px 8px; border-radius:6px; border:1px solid var(--wfv-h5e-border); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane{ flex:1; display:flex; flex-direction:column; min-width:0; background:#fff; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane + .wfv-h5e-pane{ border-left:1px solid var(--wfv-border); }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-tabbar{ display:flex; align-items:center; gap:8px; padding:0 12px; height:34px; background:#181825; border-bottom:1px solid #2d2d44; flex-shrink:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-dots{ display:flex; gap:5px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-dots span{ width:9px; height:9px; border-radius:50%; display:block; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-dots span:nth-child(1){ background:#ff5f57; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-dots span:nth-child(2){ background:#febc2e; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-dots span:nth-child(3){ background:#28c840; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-filename{ font-family:Consolas,Monaco,'Courier New',monospace; font-size:12px; color:#a6adc8; }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-previewbar{ display:flex; align-items:center; gap:6px; padding:0 10px; height:34px; background:var(--wfv-bg); border-bottom:1px solid var(--wfv-border); flex-shrink:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-previewbar-label{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--wfv-muted); font-weight:600; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-devicebtns{ display:flex; gap:2px; margin-left:auto; background:#fff; border:1px solid var(--wfv-border); border-radius:7px; padding:2px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-devicebtns button{ width:24px; height:24px; border-radius:5px; border:0; background:none; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--wfv-muted); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-devicebtns button svg{ width:14px; height:14px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-devicebtns button.wfv-h5e-active{ background:var(--wfv-primary); color:#fff; }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-codewrap{ flex:1; min-height:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-codewrap .CodeMirror{ height:100%; font-family:Consolas,Monaco,'Courier New',monospace; font-size:13px; line-height:1.55; }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-previewport{ flex:1; min-height:0; background:#eef0f4; display:flex; align-items:stretch; justify-content:center; overflow:auto; padding:0; transition:padding .15s; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-previewport.wfv-h5e-device{ padding:16px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-preview{ border:0; width:100%; height:100%; background:#fff; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-previewport.wfv-h5e-device .wfv-h5e-preview{ box-shadow:0 4px 24px rgba(15,23,42,.15); border-radius:8px; height:100%; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-previewport.wfv-h5e-tablet .wfv-h5e-preview{ width:768px; max-width:100%; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-h5e-previewport.wfv-h5e-mobile .wfv-h5e-preview{ width:375px; max-width:100%; }
+
 			@media (max-width: 782px) {
 				#<?php echo esc_attr( $uid ); ?> .wfv-h5e-panes{ flex-direction:column; height:auto; }
 				#<?php echo esc_attr( $uid ); ?> .wfv-h5e-pane{ height:<?php echo (int) $height; ?>px; }
 			}
 		</style>
 
-		<div class="wfv-h5e-toolbar">
-			<button type="button" data-act="demo">📄 Demo</button>
-			<button type="button" data-act="clear">🗑 Clear</button>
-			<button type="button" data-act="minify">📦 Minify</button>
-			<button type="button" data-act="findreplace">🔍 Find &amp; Replace</button>
+		<div class="wfv-h5e-toolbar wfv-h5e-toolbar-format">
+			<button type="button" data-cmd="bold" title="Bold"><?php echo wfv_h5e_icon( 'bold' ); ?></button>
+			<button type="button" data-cmd="italic" title="Italic"><?php echo wfv_h5e_icon( 'italic' ); ?></button>
+			<button type="button" data-cmd="underline" title="Underline"><?php echo wfv_h5e_icon( 'underline' ); ?></button>
+			<button type="button" data-cmd="strikeThrough" title="Strikethrough"><?php echo wfv_h5e_icon( 'strike' ); ?></button>
+			<span class="wfv-h5e-sep"></span>
+			<select data-cmd="formatBlock" title="Paragraph style">
+				<option value="p">Paragraph</option>
+				<option value="h1">Heading 1</option>
+				<option value="h2">Heading 2</option>
+				<option value="h3">Heading 3</option>
+				<option value="h4">Heading 4</option>
+				<option value="blockquote">Quote</option>
+				<option value="pre">Code block</option>
+			</select>
+			<span class="wfv-h5e-sep"></span>
+			<button type="button" data-cmd="insertUnorderedList" title="Bullet list"><?php echo wfv_h5e_icon( 'list-bullet' ); ?></button>
+			<button type="button" data-cmd="insertOrderedList" title="Numbered list"><?php echo wfv_h5e_icon( 'list-number' ); ?></button>
+			<button type="button" data-cmd="outdent" title="Decrease indent"><?php echo wfv_h5e_icon( 'outdent' ); ?></button>
+			<button type="button" data-cmd="indent" title="Increase indent"><?php echo wfv_h5e_icon( 'indent' ); ?></button>
+			<span class="wfv-h5e-sep"></span>
+			<button type="button" data-cmd="justifyLeft" title="Align left"><?php echo wfv_h5e_icon( 'align-left' ); ?></button>
+			<button type="button" data-cmd="justifyCenter" title="Align center"><?php echo wfv_h5e_icon( 'align-center' ); ?></button>
+			<button type="button" data-cmd="justifyRight" title="Align right"><?php echo wfv_h5e_icon( 'align-right' ); ?></button>
+			<span class="wfv-h5e-sep"></span>
+			<button type="button" data-act="link" title="Insert link"><?php echo wfv_h5e_icon( 'link' ); ?></button>
+			<button type="button" data-cmd="unlink" title="Remove link"><?php echo wfv_h5e_icon( 'unlink' ); ?></button>
+			<button type="button" data-act="image" title="Insert image"><?php echo wfv_h5e_icon( 'image' ); ?></button>
+			<button type="button" data-cmd="insertHorizontalRule" title="Horizontal rule"><?php echo wfv_h5e_icon( 'hr' ); ?></button>
+			<span class="wfv-h5e-sep"></span>
+			<button type="button" data-cmd="removeFormat" title="Clear formatting"><?php echo wfv_h5e_icon( 'eraser' ); ?></button>
+			<button type="button" data-cmd="undo" title="Undo"><?php echo wfv_h5e_icon( 'undo' ); ?></button>
+			<button type="button" data-cmd="redo" title="Redo"><?php echo wfv_h5e_icon( 'redo' ); ?></button>
+		</div>
+
+		<div class="wfv-h5e-toolbar wfv-h5e-toolbar-code">
+			<button type="button" class="wfv-h5e-wide" data-act="demo"><?php echo wfv_h5e_icon( 'file' ); ?> Demo</button>
+			<button type="button" class="wfv-h5e-wide" data-act="clear"><?php echo wfv_h5e_icon( 'trash' ); ?> Clear</button>
+			<button type="button" class="wfv-h5e-wide" data-act="minify"><?php echo wfv_h5e_icon( 'package' ); ?> Minify</button>
+			<button type="button" data-act="findreplace" title="Find &amp; replace"><?php echo wfv_h5e_icon( 'search' ); ?></button>
 			<input type="color" data-act="color" title="Pick a color, inserts hex at cursor">
-			<button type="button" data-act="bootstrap" title="Preview only">🅱 Bootstrap preview: Off</button>
+			<button type="button" class="wfv-h5e-wide" data-act="bootstrap" title="Preview only, not saved into your HTML">Bootstrap: Off</button>
 			<span style="flex:1;"></span>
-			<button type="button" data-act="font-minus">A−</button>
-			<button type="button" data-act="font-plus">A+</button>
+			<button type="button" data-act="font-minus" title="Smaller font"><?php echo wfv_h5e_icon( 'minus' ); ?></button>
+			<button type="button" data-act="font-plus" title="Larger font"><?php echo wfv_h5e_icon( 'plus' ); ?></button>
 		</div>
 		<div class="wfv-h5e-findreplace">
 			<input type="text" data-role="find" placeholder="Find…">
@@ -4701,13 +5030,362 @@ function wfv_html_editor_shortcode( $atts ) {
 
 		<div class="wfv-h5e-panes">
 			<div class="wfv-h5e-pane">
-				<div class="wfv-h5e-pane-label">HTML Source</div>
-				<textarea class="wfv-h5e-source" spellcheck="false"><?php echo esc_textarea( $starting_value ); ?></textarea>
+				<div class="wfv-h5e-tabbar">
+					<div class="wfv-h5e-dots"><span></span><span></span><span></span></div>
+					<div class="wfv-h5e-filename">index.html</div>
+				</div>
+				<div class="wfv-h5e-codewrap">
+					<textarea class="wfv-h5e-source" spellcheck="false"><?php echo esc_textarea( $starting_value ); ?></textarea>
+				</div>
 			</div>
 			<div class="wfv-h5e-pane">
-				<div class="wfv-h5e-pane-label">Live Preview</div>
-				<iframe class="wfv-h5e-preview" sandbox="allow-scripts allow-forms" title="Live preview"></iframe>
+				<div class="wfv-h5e-previewbar">
+					<span class="wfv-h5e-previewbar-label">Preview</span>
+					<div class="wfv-h5e-devicebtns">
+						<button type="button" data-device="" class="wfv-h5e-active" title="Full width"><?php echo wfv_h5e_icon( 'monitor' ); ?></button>
+						<button type="button" data-device="tablet" title="Tablet width"><?php echo wfv_h5e_icon( 'tablet' ); ?></button>
+						<button type="button" data-device="mobile" title="Mobile width"><?php echo wfv_h5e_icon( 'smartphone' ); ?></button>
+					</div>
+				</div>
+				<div class="wfv-h5e-previewport">
+					<iframe class="wfv-h5e-preview" title="Live preview"></iframe>
+				</div>
 			</div>
+		</div>
+	</div>
+
+	<script>
+	(function(){
+		function boot(){
+			var root = document.getElementById(<?php echo wp_json_encode( $uid ); ?>);
+			if ( ! root || root.dataset.wfvInit ) { return; }
+			root.dataset.wfvInit = '1';
+
+			var demoHtml    = <?php echo wp_json_encode( $demo_html ); ?>;
+			var textarea    = root.querySelector('.wfv-h5e-source');
+			var preview     = root.querySelector('.wfv-h5e-preview');
+			var previewport = root.querySelector('.wfv-h5e-previewport');
+			var findRow     = root.querySelector('.wfv-h5e-findreplace');
+			var bootstrapOn = false;
+			var syncingFromIframe = false;
+			var cm = null;
+
+			function getCode(){ return cm ? cm.getValue() : textarea.value; }
+			function setCode( val ){ if ( cm ) { cm.setValue( val ); } else { textarea.value = val; } }
+
+			if ( window.CodeMirror ) {
+				cm = CodeMirror.fromTextArea( textarea, {
+					mode: 'htmlmixed',
+					theme: 'dracula',
+					lineNumbers: true,
+					lineWrapping: true,
+					tabSize: 2,
+					indentUnit: 2,
+					matchBrackets: true,
+					autoCloseBrackets: true,
+					autoCloseTags: true
+				});
+				cm.on('change', function(){
+					if ( syncingFromIframe ) { return; }
+					clearTimeout(debounceTimer);
+					debounceTimer = setTimeout(reloadPreview, 250);
+				});
+			} else {
+				textarea.addEventListener('input', function(){
+					if ( syncingFromIframe ) { return; }
+					clearTimeout(debounceTimer);
+					debounceTimer = setTimeout(reloadPreview, 250);
+				});
+			}
+
+			function bootstrapLink(){
+				return '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">';
+			}
+			function reloadPreview(){
+				var html = getCode();
+				if ( bootstrapOn ) { html = bootstrapLink() + html; }
+				preview.srcdoc = html;
+			}
+			var debounceTimer;
+
+			function makeIframeEditable(){
+				try {
+					var doc = preview.contentDocument;
+					if ( ! doc || ! doc.body ) { return; }
+					doc.designMode = 'on';
+					doc.body.style.minHeight = '100%';
+					doc.body.style.outline = 'none';
+					doc.body.addEventListener('input', syncFromIframe);
+					doc.body.addEventListener('blur', syncFromIframe);
+				} catch ( e ) {}
+			}
+			function syncFromIframe(){
+				try {
+					var doc = preview.contentDocument;
+					if ( ! doc ) { return; }
+					var headHtml = ( doc.head && doc.head.innerHTML.trim() ) ? doc.head.innerHTML + '\n' : '';
+					var bodyHtml = doc.body ? doc.body.innerHTML : '';
+					syncingFromIframe = true;
+					setCode( headHtml + bodyHtml );
+					syncingFromIframe = false;
+				} catch ( e ) {}
+			}
+			preview.addEventListener('load', makeIframeEditable);
+			reloadPreview();
+
+			function exec( cmd, value ){
+				try {
+					preview.contentWindow.focus();
+					preview.contentDocument.execCommand( cmd, false, value || null );
+					syncFromIframe();
+				} catch ( e ) {}
+			}
+
+			root.querySelectorAll('.wfv-h5e-toolbar-format [data-cmd]').forEach(function(el){
+				if ( 'SELECT' === el.tagName ) {
+					el.addEventListener('change', function(){
+						exec( el.dataset.cmd, el.value );
+						el.selectedIndex = 0;
+					});
+				} else {
+					el.addEventListener('click', function(){ exec( el.dataset.cmd ); });
+				}
+			});
+			root.querySelectorAll('.wfv-h5e-toolbar-format [data-act]').forEach(function(btn){
+				btn.addEventListener('click', function(){
+					if ( 'link' === btn.dataset.act ) {
+						var url = window.prompt( 'Link URL:', 'https://' );
+						if ( url ) { exec( 'createLink', url ); }
+					} else if ( 'image' === btn.dataset.act ) {
+						var src = window.prompt( 'Image URL:', 'https://' );
+						if ( src ) { exec( 'insertImage', src ); }
+					}
+				});
+			});
+
+			root.querySelectorAll('.wfv-h5e-toolbar-code [data-act]').forEach(function(btn){
+				btn.addEventListener('click', function(){
+					var act = btn.dataset.act;
+					if ( 'demo' === act ) {
+						setCode( demoHtml );
+						reloadPreview();
+					} else if ( 'clear' === act ) {
+						if ( getCode() && ! confirm('Clear all HTML in the editor?') ) { return; }
+						setCode( '' );
+						reloadPreview();
+					} else if ( 'minify' === act ) {
+						setCode( getCode().replace(/\n\s*/g, '').replace(/>\s+</g, '><').trim() );
+						reloadPreview();
+					} else if ( 'findreplace' === act ) {
+						findRow.style.display = ( findRow.style.display === 'flex' ) ? 'none' : 'flex';
+					} else if ( 'replace-all' === act ) {
+						var find = findRow.querySelector('[data-role="find"]').value;
+						var replace = findRow.querySelector('[data-role="replace"]').value;
+						if ( ! find ) { return; }
+						setCode( getCode().split(find).join(replace) );
+						reloadPreview();
+					} else if ( 'bootstrap' === act ) {
+						bootstrapOn = ! bootstrapOn;
+						btn.textContent = '';
+						btn.appendChild( ( function(){ var d=document.createElement('span'); d.innerHTML = <?php echo wp_json_encode( wfv_h5e_icon( 'package' ) ); ?>; return d.firstChild; } )() );
+						btn.appendChild( document.createTextNode( ' Bootstrap: ' + ( bootstrapOn ? 'On' : 'Off' ) ) );
+						reloadPreview();
+					} else if ( 'font-plus' === act || 'font-minus' === act ) {
+						if ( cm ) {
+							var el = cm.getWrapperElement();
+							var current = parseInt( window.getComputedStyle(el).fontSize, 10 ) || 13;
+							var next = ( 'font-plus' === act ) ? Math.min(22, current + 1) : Math.max(10, current - 1);
+							el.style.fontSize = next + 'px';
+							cm.refresh();
+						}
+					}
+				});
+			});
+
+			root.querySelector('[data-act="color"]').addEventListener('input', function(e){
+				var hex = e.target.value;
+				if ( cm ) {
+					cm.replaceSelection( hex );
+					cm.focus();
+				} else {
+					var start = textarea.selectionStart, end = textarea.selectionEnd;
+					textarea.value = textarea.value.slice(0, start) + hex + textarea.value.slice(end);
+				}
+				reloadPreview();
+			});
+
+			root.querySelectorAll('.wfv-h5e-devicebtns [data-device]').forEach(function(btn){
+				btn.addEventListener('click', function(){
+					root.querySelectorAll('.wfv-h5e-devicebtns button').forEach(function(b){ b.classList.remove('wfv-h5e-active'); });
+					btn.classList.add('wfv-h5e-active');
+					previewport.classList.remove('wfv-h5e-device', 'wfv-h5e-tablet', 'wfv-h5e-mobile');
+					if ( btn.dataset.device ) {
+						previewport.classList.add('wfv-h5e-device', 'wfv-h5e-' + btn.dataset.device);
+					}
+				});
+			});
+		}
+
+		// Wait for CodeMirror's scripts (loaded once, shared across instances) before booting.
+		function whenReady( cb ){
+			if ( window.CodeMirror ) { cb(); return; }
+			var tries = 0;
+			var iv = setInterval( function(){
+				tries++;
+				if ( window.CodeMirror || tries > 100 ) {
+					clearInterval(iv);
+					cb();
+				}
+			}, 50 );
+		}
+		whenReady( boot );
+	})();
+	</script>
+	<?php
+	return ob_get_clean();
+}
+
+/**
+ * ------------------------------------------------------------------
+ * Sticky Notes — a front-end embeddable Post-it-style note board:
+ * [wfv_sticky_notes]
+ *
+ * If the visitor is logged in, notes are saved to the database (via
+ * the AJAX endpoints above) and follow them across devices. If they
+ * are not logged in, notes are saved only in that browser's
+ * localStorage — nothing touches the server, and the notes won't
+ * appear on another device or browser. Either way: pin, priority
+ * (low/medium/high), and filtering all work the same.
+ * ------------------------------------------------------------------
+ */
+add_shortcode( 'wfv_sticky_notes', 'wfv_sticky_notes_shortcode' );
+function wfv_sticky_notes_shortcode( $atts ) {
+	static $instance = 0;
+	$instance++;
+
+	$atts = shortcode_atts( array( 'height' => '480' ), $atts, 'wfv_sticky_notes' );
+	$uid    = 'wfv-sn-' . $instance . '-' . wp_rand( 1000, 9999 );
+	$height = max( 200, absint( $atts['height'] ) );
+
+	$logged_in = is_user_logged_in();
+	$nonce     = $logged_in ? wp_create_nonce( 'wfv_sticky_notes' ) : '';
+
+	ob_start();
+	?>
+	<div id="<?php echo esc_attr( $uid ); ?>" class="wfv-sn">
+		<style>
+			#<?php echo esc_attr( $uid ); ?> { --wfv-sn-primary:#6366f1; --wfv-sn-primary-dark:#4f46e5; --wfv-sn-border:#e2e8f0; --wfv-sn-bg:#f8fafc; --wfv-sn-slate:#475569; --wfv-sn-muted:#94a3b8;
+				border:1px solid var(--wfv-sn-border); border-radius:14px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; background:#fff; }
+			#<?php echo esc_attr( $uid ); ?> *{ box-sizing:border-box; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-header{ display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:14px 16px; border-bottom:1px solid var(--wfv-sn-border); background:var(--wfv-sn-bg); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-title{ font-weight:700; font-size:14px; color:#0f172a; display:flex; align-items:center; gap:6px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-storage-badge{ font-size:10.5px; padding:2px 9px; border-radius:99px; font-weight:600; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-storage-badge.wfv-sn-on{ background:#ecfdf3; color:#027a48; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-storage-badge.wfv-sn-off{ background:#fff4e5; color:#b8590a; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-filters{ display:flex; gap:5px; flex-wrap:wrap; margin-left:auto; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-filters button{ font-size:11.5px; font-weight:600; padding:5px 11px; border-radius:99px; border:1px solid var(--wfv-sn-border); background:#fff; cursor:pointer; color:var(--wfv-sn-slate); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-filters button.wfv-sn-active{ background:var(--wfv-sn-primary); border-color:var(--wfv-sn-primary); color:#fff; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-add{ background:var(--wfv-sn-primary); color:#fff; border:0; border-radius:8px; padding:8px 14px; font-weight:600; font-size:12.5px; cursor:pointer; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-add:hover{ background:var(--wfv-sn-primary-dark); }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-body{ padding:16px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; align-content:start; max-height:<?php echo (int) $height; ?>px; overflow-y:auto; padding-right:4px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-empty{ min-height:<?php echo (int) min( 160, $height ); ?>px; display:flex; align-items:center; justify-content:center; text-align:center; padding:36px 16px; color:var(--wfv-sn-muted); font-size:13px; }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note{ position:relative; border-radius:10px; padding:14px 14px 40px; min-height:110px; box-shadow:0 2px 6px rgba(15,23,42,.08); transition:transform .12s; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note:hover{ transform:translateY(-2px); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note.wfv-sn-priority-low{ background:#ecfdf3; border:1px solid #b7f0cc; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note.wfv-sn-priority-medium{ background:#fffbea; border:1px solid #fbe38a; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note.wfv-sn-priority-high{ background:#fef3f2; border:1px solid #fecdca; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-content{ font-size:13.5px; color:#1e293b; word-break:break-word; line-height:1.5; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-content p{ margin:0 0 6px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-content p:last-child{ margin-bottom:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-content ul, #<?php echo esc_attr( $uid ); ?> .wfv-sn-note-content ol{ margin:0 0 6px 18px; padding:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-content a{ color:var(--wfv-sn-primary-dark); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-footer{ position:absolute; left:14px; right:14px; bottom:10px; display:flex; align-items:center; justify-content:space-between; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-badge{ font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 8px; border-radius:99px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-badge.wfv-sn-priority-low{ background:#d1fae5; color:#027a48; border:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-badge.wfv-sn-priority-medium{ background:#fef3c7; color:#92700a; border:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-badge.wfv-sn-priority-high{ background:#fee2e2; color:#b42318; border:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-actions{ display:flex; gap:4px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-actions button{ background:rgba(255,255,255,.7); border:1px solid rgba(0,0,0,.06); border-radius:6px; width:24px; height:24px; display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-note-actions button svg{ width:13px; height:13px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-pin{ position:absolute; top:8px; right:8px; background:none; border:0; cursor:pointer; font-size:15px; opacity:.35; filter:grayscale(1); transform:rotate(45deg); transition:.15s; padding:2px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-pin:hover{ opacity:.7; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-pin.wfv-sn-pinned{ opacity:1; filter:none; transform:rotate(0deg); }
+
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer{ display:none; background:#fff; border:1px solid var(--wfv-sn-border); border-radius:10px; padding:14px; margin-bottom:16px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-toolbar{ display:flex; gap:2px; margin-bottom:8px; flex-wrap:wrap; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-toolbar button{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; border-radius:6px; border:1px solid transparent; background:none; cursor:pointer; color:var(--wfv-sn-slate); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-toolbar button svg{ width:14px; height:14px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-toolbar button:hover{ background:var(--wfv-sn-bg); color:var(--wfv-sn-primary-dark); border-color:var(--wfv-sn-border); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-toolbar .wfv-sn-sep{ width:1px; height:18px; background:var(--wfv-sn-border); margin:4px 4px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-editable{ width:100%; box-sizing:border-box; border:1px solid var(--wfv-sn-border); border-radius:8px; padding:9px 11px; font-family:inherit; font-size:13.5px; min-height:70px; margin-bottom:10px; outline:none; line-height:1.5; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-editable:focus{ border-color:var(--wfv-sn-primary); box-shadow:0 0 0 2px #eef2ff; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-editable p{ margin:0 0 6px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-editable ul, #<?php echo esc_attr( $uid ); ?> .wfv-sn-editable ol{ margin:0 0 6px 18px; padding:0; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-editable:empty:before{ content:attr(data-placeholder); color:var(--wfv-sn-muted); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-footer{ display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-choice{ display:flex; gap:6px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-choice label{ font-size:11.5px; font-weight:600; padding:5px 10px; border-radius:99px; border:1px solid var(--wfv-sn-border); cursor:pointer; color:var(--wfv-sn-slate); }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-choice input{ display:none; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-choice input:checked + span{ font-weight:700; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-choice label.wfv-sn-priority-low{ background:#ecfdf3; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-choice label.wfv-sn-priority-medium{ background:#fffbea; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-priority-choice label.wfv-sn-priority-high{ background:#fef3f2; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-actions{ display:flex; gap:8px; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-actions button{ font-size:12.5px; padding:7px 14px; border-radius:7px; border:1px solid var(--wfv-sn-border); background:#fff; cursor:pointer; }
+			#<?php echo esc_attr( $uid ); ?> .wfv-sn-composer-actions button.wfv-sn-save{ background:var(--wfv-sn-primary); border-color:var(--wfv-sn-primary); color:#fff; font-weight:600; }
+		</style>
+
+		<div class="wfv-sn-header">
+			<div class="wfv-sn-title">
+				📌 Sticky Notes
+				<?php if ( $logged_in ) : ?>
+					<span class="wfv-sn-storage-badge wfv-sn-on">Saved to your account</span>
+				<?php else : ?>
+					<span class="wfv-sn-storage-badge wfv-sn-off">Saved in this browser only</span>
+				<?php endif; ?>
+			</div>
+			<div class="wfv-sn-filters">
+				<button type="button" data-filter="all" class="wfv-sn-active">All</button>
+				<button type="button" data-filter="pinned">📌 Pinned</button>
+				<button type="button" data-filter="high">High</button>
+				<button type="button" data-filter="medium">Medium</button>
+				<button type="button" data-filter="low">Low</button>
+			</div>
+			<button type="button" class="wfv-sn-add" id="<?php echo esc_attr( $uid ); ?>-add">+ Add note</button>
+		</div>
+
+		<div class="wfv-sn-body">
+			<div class="wfv-sn-composer" id="<?php echo esc_attr( $uid ); ?>-composer">
+				<div class="wfv-sn-composer-toolbar">
+					<button type="button" data-cmd="bold" title="Bold"><?php echo wfv_h5e_icon( 'bold' ); ?></button>
+					<button type="button" data-cmd="italic" title="Italic"><?php echo wfv_h5e_icon( 'italic' ); ?></button>
+					<button type="button" data-cmd="underline" title="Underline"><?php echo wfv_h5e_icon( 'underline' ); ?></button>
+					<button type="button" data-cmd="strikeThrough" title="Strikethrough"><?php echo wfv_h5e_icon( 'strike' ); ?></button>
+					<span class="wfv-sn-sep"></span>
+					<button type="button" data-cmd="insertUnorderedList" title="Bullet list"><?php echo wfv_h5e_icon( 'list-bullet' ); ?></button>
+					<button type="button" data-cmd="insertOrderedList" title="Numbered list"><?php echo wfv_h5e_icon( 'list-number' ); ?></button>
+					<span class="wfv-sn-sep"></span>
+					<button type="button" data-act="link" title="Insert link"><?php echo wfv_h5e_icon( 'link' ); ?></button>
+					<button type="button" data-cmd="removeFormat" title="Clear formatting"><?php echo wfv_h5e_icon( 'eraser' ); ?></button>
+				</div>
+				<div class="wfv-sn-editable" contenteditable="true" data-placeholder="Write a quick note…"></div>
+				<div class="wfv-sn-composer-footer">
+					<div class="wfv-sn-priority-choice">
+						<label class="wfv-sn-priority-low"><input type="radio" name="<?php echo esc_attr( $uid ); ?>-priority" value="low"><span>Low</span></label>
+						<label class="wfv-sn-priority-medium"><input type="radio" name="<?php echo esc_attr( $uid ); ?>-priority" value="medium" checked><span>Medium</span></label>
+						<label class="wfv-sn-priority-high"><input type="radio" name="<?php echo esc_attr( $uid ); ?>-priority" value="high"><span>High</span></label>
+					</div>
+					<div class="wfv-sn-composer-actions">
+						<button type="button" data-act="cancel">Cancel</button>
+						<button type="button" data-act="save" class="wfv-sn-save">Save note</button>
+					</div>
+				</div>
+			</div>
+			<div class="wfv-sn-grid" id="<?php echo esc_attr( $uid ); ?>-grid"></div>
+			<div class="wfv-sn-empty" id="<?php echo esc_attr( $uid ); ?>-empty" style="display:none;">No notes yet — click "+ Add note" to write your first one.</div>
 		</div>
 	</div>
 
@@ -4717,69 +5395,274 @@ function wfv_html_editor_shortcode( $atts ) {
 		if ( ! root || root.dataset.wfvInit ) { return; }
 		root.dataset.wfvInit = '1';
 
-		var demoHtml   = <?php echo wp_json_encode( $demo_html ); ?>;
-		var source     = root.querySelector('.wfv-h5e-source');
-		var preview    = root.querySelector('.wfv-h5e-preview');
-		var findRow    = root.querySelector('.wfv-h5e-findreplace');
-		var bootstrapOn = false;
-		var fontSize    = 13;
+		var loggedIn = <?php echo $logged_in ? 'true' : 'false'; ?>;
+		var ajaxurl_ = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+		var nonce    = <?php echo wp_json_encode( $nonce ); ?>;
 
-		function updatePreview(){
-			var html = source.value;
-			if ( bootstrapOn ) {
-				html = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">' + html;
-			}
-			preview.srcdoc = html;
+		var grid      = document.getElementById( <?php echo wp_json_encode( $uid . '-grid' ); ?> );
+		var emptyMsg  = document.getElementById( <?php echo wp_json_encode( $uid . '-empty' ); ?> );
+		var composer  = document.getElementById( <?php echo wp_json_encode( $uid . '-composer' ); ?> );
+		var addBtn    = document.getElementById( <?php echo wp_json_encode( $uid . '-add' ); ?> );
+		var editable  = composer.querySelector('.wfv-sn-editable');
+		var activeFilter = 'all';
+		var notes = [];
+		var editingId = null;
+
+		var ICONS = {
+			edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+			trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,7 20,7"/><path d="M6 7l1 14h10l1-14"/><path d="M9 7V4h6v3"/></svg>'
+		};
+
+		/* ---------- Formatting (mirrors the server's wfv_sticky_allowed_tags allow-list) ---------- */
+		var ALLOWED_TAGS = { B:1, STRONG:1, I:1, EM:1, U:1, S:1, STRIKE:1, BR:1, P:1, UL:1, OL:1, LI:1, A:1 };
+		function sanitizeStickyHtml( html ){
+			var tmp = document.createElement('div');
+			tmp.innerHTML = html;
+			( function clean( node ){
+				Array.prototype.slice.call( node.childNodes ).forEach(function( child ){
+					if ( child.nodeType === 1 ) {
+						if ( ! ALLOWED_TAGS[ child.tagName ] ) {
+							// Unwrap disallowed elements: keep their text/children, drop the tag itself.
+							while ( child.firstChild ) { node.insertBefore( child.firstChild, child ); }
+							node.removeChild( child );
+							return;
+						}
+						Array.prototype.slice.call( child.attributes ).forEach(function( attr ){
+							if ( 'A' === child.tagName && 'href' === attr.name.toLowerCase() ) {
+								if ( /^\s*javascript:/i.test( attr.value ) ) { child.removeAttribute( attr.name ); }
+								return;
+							}
+							child.removeAttribute( attr.name );
+						});
+						if ( 'A' === child.tagName ) {
+							child.setAttribute( 'target', '_blank' );
+							child.setAttribute( 'rel', 'noopener noreferrer' );
+						}
+						clean( child );
+					} else if ( child.nodeType !== 3 ) {
+						node.removeChild( child ); // strip comments etc.
+					}
+				});
+			} )( tmp );
+			return tmp.innerHTML;
 		}
-		var debounceTimer;
-		source.addEventListener('input', function(){
-			clearTimeout(debounceTimer);
-			debounceTimer = setTimeout(updatePreview, 250);
+		function exec( cmd, value ){
+			editable.focus();
+			document.execCommand( cmd, false, value || null );
+		}
+		composer.querySelectorAll('.wfv-sn-composer-toolbar [data-cmd]').forEach(function( btn ){
+			btn.addEventListener('click', function(){ exec( btn.dataset.cmd ); });
 		});
-		updatePreview();
+		composer.querySelector('[data-act="link"]').addEventListener('click', function(){
+			var url = window.prompt( 'Link URL:', 'https://' );
+			if ( url ) { exec( 'createLink', url ); }
+		});
 
-		root.querySelectorAll('[data-act]').forEach(function(btn){
-			btn.addEventListener('click', function(){
-				var act = btn.dataset.act;
-				if ( 'demo' === act ) {
-					source.value = demoHtml;
-					updatePreview();
-				} else if ( 'clear' === act ) {
-					if ( source.value && ! confirm('Clear all HTML in the editor?') ) { return; }
-					source.value = '';
-					updatePreview();
-				} else if ( 'minify' === act ) {
-					source.value = source.value.replace(/\n\s*/g, '').replace(/>\s+</g, '><').trim();
-					updatePreview();
-				} else if ( 'findreplace' === act ) {
-					findRow.style.display = ( findRow.style.display === 'flex' ) ? 'none' : 'flex';
-				} else if ( 'replace-all' === act ) {
-					var find = findRow.querySelector('[data-role="find"]').value;
-					var replace = findRow.querySelector('[data-role="replace"]').value;
-					if ( ! find ) { return; }
-					source.value = source.value.split(find).join(replace);
-					updatePreview();
-				} else if ( 'bootstrap' === act ) {
-					bootstrapOn = ! bootstrapOn;
-					btn.textContent = '🅱 Bootstrap preview: ' + ( bootstrapOn ? 'On' : 'Off' );
-					updatePreview();
-				} else if ( 'font-plus' === act ) {
-					fontSize = Math.min(22, fontSize + 1);
-					source.style.fontSize = fontSize + 'px';
-				} else if ( 'font-minus' === act ) {
-					fontSize = Math.max(10, fontSize - 1);
-					source.style.fontSize = fontSize + 'px';
+		/* ---------- Storage backends ---------- */
+		function makeLocalBackend(){
+			var KEY = 'wfv_sticky_notes_v1';
+			function readAll(){
+				try { var v = JSON.parse( window.localStorage.getItem(KEY) ); return Array.isArray(v) ? v : []; }
+				catch(e){ return []; }
+			}
+			function writeAll(list){
+				try { window.localStorage.setItem( KEY, JSON.stringify(list) ); } catch(e){}
+			}
+			return {
+				list: function(){ return Promise.resolve( readAll() ); },
+				save: function( note ){
+					var list = readAll();
+					var cleanContent = sanitizeStickyHtml( note.content );
+					if ( note.id ) {
+						list = list.map(function(n){
+							if ( n.id === note.id ) {
+								return Object.assign( {}, n, { content: cleanContent, priority: note.priority, updated_at: new Date().toISOString() } );
+							}
+							return n;
+						});
+					} else {
+						note.id = 'local-' + Date.now() + '-' + Math.floor( Math.random() * 100000 );
+						note.content = cleanContent;
+						note.pinned = false;
+						note.updated_at = new Date().toISOString();
+						list.unshift( note );
+					}
+					writeAll( list );
+					return Promise.resolve( Object.assign( {}, note, { content: cleanContent } ) );
+				},
+				remove: function( id ){
+					writeAll( readAll().filter(function(n){ return n.id !== id; }) );
+					return Promise.resolve();
+				},
+				togglePin: function( id ){
+					var updated = null;
+					var list = readAll().map(function(n){
+						if ( n.id === id ) { n.pinned = ! n.pinned; updated = n; }
+						return n;
+					});
+					writeAll( list );
+					return Promise.resolve( updated );
 				}
+			};
+		}
+
+		function makeDbBackend(){
+			function call( action, params ){
+				var body = new URLSearchParams();
+				body.append( 'action', action );
+				body.append( 'nonce', nonce );
+				Object.keys( params || {} ).forEach(function( k ){ body.append( k, params[k] ); });
+				return fetch( ajaxurl_, { method: 'POST', credentials: 'same-origin', body: body } )
+					.then(function( r ){ return r.json(); })
+					.then(function( res ){
+						if ( ! res || ! res.success ) { throw new Error('request failed'); }
+						return res.data;
+					});
+			}
+			return {
+				list: function(){ return call( 'wfv_sticky_list' ); },
+				save: function( note ){ return call( 'wfv_sticky_save', note ); },
+				remove: function( id ){ return call( 'wfv_sticky_delete', { id: id } ); },
+				togglePin: function( id ){ return call( 'wfv_sticky_toggle_pin', { id: id } ); }
+			};
+		}
+
+		var backend = loggedIn ? makeDbBackend() : makeLocalBackend();
+
+		/* ---------- Rendering ---------- */
+		function sortNotes( list ){
+			return list.slice().sort(function( a, b ){
+				if ( !!a.pinned !== !!b.pinned ) { return a.pinned ? -1 : 1; }
+				return new Date( b.updated_at ) - new Date( a.updated_at );
+			});
+		}
+		function matchesFilter( n ){
+			if ( 'all' === activeFilter ) { return true; }
+			if ( 'pinned' === activeFilter ) { return !! n.pinned; }
+			return n.priority === activeFilter;
+		}
+		function render(){
+			var visible = sortNotes( notes ).filter( matchesFilter );
+			grid.innerHTML = '';
+			emptyMsg.style.display = visible.length ? 'none' : '';
+			visible.forEach(function( n ){
+				grid.appendChild( buildCard( n ) );
+			});
+		}
+		function buildCard( n ){
+			var card = document.createElement('div');
+			card.className = 'wfv-sn-note wfv-sn-priority-' + ( n.priority || 'medium' );
+
+			var contentEl = document.createElement('div');
+			contentEl.className = 'wfv-sn-note-content';
+			contentEl.innerHTML = sanitizeStickyHtml( n.content ); // always re-sanitized client-side too, defense in depth
+			card.appendChild( contentEl );
+
+			var pinBtn = document.createElement('button');
+			pinBtn.type = 'button';
+			pinBtn.className = 'wfv-sn-pin' + ( n.pinned ? ' wfv-sn-pinned' : '' );
+			pinBtn.title = n.pinned ? 'Unpin' : 'Pin';
+			pinBtn.textContent = '📌';
+			pinBtn.addEventListener('click', function(){
+				backend.togglePin( n.id ).then(function( updated ){
+					if ( updated ) {
+						n.pinned = updated.pinned;
+					} else {
+						n.pinned = ! n.pinned;
+					}
+					render();
+				});
+			});
+			card.appendChild( pinBtn );
+
+			var footer = document.createElement('div');
+			footer.className = 'wfv-sn-note-footer';
+
+			var badge = document.createElement('span');
+			badge.className = 'wfv-sn-priority-badge wfv-sn-priority-' + ( n.priority || 'medium' );
+			badge.textContent = n.priority || 'medium';
+			footer.appendChild( badge );
+
+			var actions = document.createElement('div');
+			actions.className = 'wfv-sn-note-actions';
+
+			var editBtn = document.createElement('button');
+			editBtn.type = 'button';
+			editBtn.title = 'Edit';
+			editBtn.innerHTML = ICONS.edit;
+			editBtn.addEventListener('click', function(){ openComposer( n ); });
+			actions.appendChild( editBtn );
+
+			var delBtn = document.createElement('button');
+			delBtn.type = 'button';
+			delBtn.title = 'Delete';
+			delBtn.innerHTML = ICONS.trash;
+			delBtn.addEventListener('click', function(){
+				if ( ! window.confirm('Delete this note?') ) { return; }
+				backend.remove( n.id ).then(function(){
+					notes = notes.filter(function(x){ return x.id !== n.id; });
+					render();
+				});
+			});
+			actions.appendChild( delBtn );
+
+			footer.appendChild( actions );
+			card.appendChild( footer );
+			return card;
+		}
+
+		/* ---------- Composer ---------- */
+		function openComposer( note ){
+			editingId = note ? note.id : null;
+			editable.innerHTML = note ? sanitizeStickyHtml( note.content ) : '';
+			var priority = note ? ( note.priority || 'medium' ) : 'medium';
+			root.querySelectorAll('.wfv-sn-priority-choice input').forEach(function( input ){
+				input.checked = ( input.value === priority );
+			});
+			composer.style.display = 'block';
+			editable.focus();
+		}
+		function closeComposer(){
+			composer.style.display = 'none';
+			editingId = null;
+			editable.innerHTML = '';
+		}
+		addBtn.addEventListener('click', function(){ openComposer( null ); });
+		composer.querySelector('[data-act="cancel"]').addEventListener('click', closeComposer);
+		composer.querySelector('[data-act="save"]').addEventListener('click', function(){
+			var content = sanitizeStickyHtml( editable.innerHTML );
+			if ( ! content.replace(/<[^>]*>/g, '').trim() ) { closeComposer(); return; }
+			var priorityInput = root.querySelector('.wfv-sn-priority-choice input:checked');
+			var priority = priorityInput ? priorityInput.value : 'medium';
+
+			var payload = { content: content, priority: priority };
+			if ( editingId ) { payload.id = editingId; }
+
+			backend.save( payload ).then(function( saved ){
+				if ( editingId ) {
+					notes = notes.map(function( n ){ return n.id === editingId ? saved : n; });
+				} else {
+					notes.unshift( saved );
+				}
+				closeComposer();
+				render();
 			});
 		});
 
-		root.querySelector('[data-act="color"]').addEventListener('input', function(e){
-			var hex = e.target.value;
-			var start = source.selectionStart, end = source.selectionEnd;
-			source.value = source.value.slice(0, start) + hex + source.value.slice(end);
-			source.focus();
-			source.selectionStart = source.selectionEnd = start + hex.length;
-			updatePreview();
+		/* ---------- Filters ---------- */
+		root.querySelectorAll('.wfv-sn-filters button').forEach(function( btn ){
+			btn.addEventListener('click', function(){
+				root.querySelectorAll('.wfv-sn-filters button').forEach(function( b ){ b.classList.remove('wfv-sn-active'); });
+				btn.classList.add('wfv-sn-active');
+				activeFilter = btn.dataset.filter;
+				render();
+			});
+		});
+
+		/* ---------- Boot ---------- */
+		backend.list().then(function( list ){
+			notes = list || [];
+			render();
 		});
 	})();
 	</script>
