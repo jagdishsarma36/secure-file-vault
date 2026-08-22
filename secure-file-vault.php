@@ -3,7 +3,7 @@
  * Plugin Name: Secure File Vault
  * Plugin URI: https://github.com/jagdishsarma36/secure-file-vault
  * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links), CSV import from LastPass/Google/Bitwarden, a [wfv_html_editor] shortcode that embeds a live, stateless dual-pane HTML editor anyone can use on the front end, and a [wfv_sticky_notes] shortcode for a pin/priority/filter note board that saves to the database when logged in or to the browser otherwise — all under one unified "Secure Vault" menu with a shared modern design system.
- * Version: 2.6.0
+ * Version: 2.6.1
  * Author: Jagdish Sarma
  * Author URI: https://github.com/jagdishsarma36
  * License: GPL2
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WFV_VERSION', '2.6.0' );
+define( 'WFV_VERSION', '2.6.1' );
 define( 'WFV_PRIVATE_DIRNAME', 'wfv-private' );
 define( 'WFV_FILE', __FILE__ );
 define( 'WFV_DIR', plugin_dir_path( __FILE__ ) );
@@ -5274,6 +5274,7 @@ function wfv_sticky_notes_shortcode( $atts ) {
 	?>
 	<div id="<?php echo esc_attr( $uid ); ?>" class="wfv-sn">
 		<style>
+			.wfv-sn-note-content {max-height: 400px;overflow-x: auto;}
 			#<?php echo esc_attr( $uid ); ?> { --wfv-sn-primary:#6366f1; --wfv-sn-primary-dark:#4f46e5; --wfv-sn-border:#e2e8f0; --wfv-sn-bg:#f8fafc; --wfv-sn-slate:#475569; --wfv-sn-muted:#94a3b8;
 				border:1px solid var(--wfv-sn-border); border-radius:14px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; background:#fff; }
 			#<?php echo esc_attr( $uid ); ?> *{ box-sizing:border-box; }
