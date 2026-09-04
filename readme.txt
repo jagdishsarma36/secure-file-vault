@@ -4,7 +4,7 @@ Tags: file sharing, password manager, notes, private files, security
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.6.0
+Stable tag: 2.9.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -17,7 +17,9 @@ Private file storage with Drive-style folders, a LastPass-style notes and passwo
 = Files =
 
 * Upload files into Drive-style folders with 10 color tags, starring, and drag-free navigation via breadcrumbs
+* Multi-file uploads run over AJAX one file at a time with a live progress bar — safe for many or large files (no single-request timeout)
 * Generate a unique, revocable share link per recipient — never the same URL for two people
+* **Share whole folders** two ways: a public, revocable link (with its own password, expiry and download limit, listing a read-only snapshot of the folder) or share directly with specific WordPress users who then see it under "Shared with me"
 * Each link can have its own optional password, expiry date, and download limit
 * Images and PDFs preview inline in the browser instead of forcing a download
 * Every user sees only their own files and folders; site admins can additionally see everyone's (useful for team oversight)
@@ -41,21 +43,22 @@ Private file storage with Drive-style folders, a LastPass-style notes and passwo
 
 = HTML Editor =
 
-* A professional, IDE-style dual-pane composer — a real syntax-highlighted code editor (CodeMirror, with line numbers, bracket matching, and auto-closing tags) on the left, a directly-editable visual preview on the right, similar in spirit to html5-editor.net
+* A professional, IDE-style dual-pane composer — a real syntax-highlighted code editor (CodeMirror 6, bundled locally with the plugin, with line numbers, bracket matching, auto-closing tags, auto-complete, and a built-in find panel) on the left, a directly-editable visual preview on the right, similar in spirit to html5-editor.net
 * Full formatting toolbar with icon buttons, on the preview side: Bold, Italic, Underline, Strikethrough, heading styles (H1–H4), blockquote, code block, bullet/numbered lists, indent/outdent, alignment, links, images, horizontal rule, clear formatting, undo/redo — edits there sync back into the raw HTML automatically
 * Device-width preview toggle (desktop / tablet / mobile) to check responsive layouts at a glance
 * Nothing is saved anywhere on the server — it's a pure front-end tool. Drop `[wfv_html_editor]` into any post or page and anyone viewing it (no login required) gets a working live editor in their browser
-* Demo content, one-click minify, find & replace, a color picker, adjustable font size, and an optional Bootstrap CDN toggle for previewing
+* Demo content, one-click minify, inline-style cleanup, find &amp; replace, a color picker, one-click copy to clipboard, a live status bar (cursor position + character/line counts), adjustable font size, and an optional Bootstrap CDN toggle for previewing
 * Optional shortcode attributes: `[wfv_html_editor height="600" demo="no"]`
 * Place it multiple times on the same page — each instance runs independently
-* Loads CodeMirror from a CDN (only once per page, however many times the shortcode is used) — the only external dependency anywhere in this plugin, scoped to this one optional tool
+* CodeMirror 6 is bundled locally with the plugin (no external CDN, no runtime dependency on third-party servers), loaded only once per page however many times the shortcode is used
 
 = Sticky Notes =
 
 * A Post-it-style note board embeddable anywhere with `[wfv_sticky_notes]` — no admin setup required
 * **Signed-in visitors**: notes save to the database and follow them across devices, private to that person (no admin bypass)
 * **Signed-out visitors**: notes save only in that browser's `localStorage` — nothing touches the server, and the notes won't appear on another device or browser (the widget shows which mode is active)
-* Basic formatting when writing a note — Bold, Italic, Underline, Strikethrough, bullet/numbered lists, and links — restricted to a small safe tag allow-list enforced both server-side and client-side, so formatting never becomes a way to inject scripts or arbitrary markup
+* Full formatting when writing a note — Bold, Italic, Underline, Strikethrough, text color, highlight color, bullet/numbered lists, code blocks, and links — preserved through saving and restricted to a small safe tag allow-list enforced both server-side and client-side, so formatting never becomes a way to inject scripts or arbitrary markup
+* Give every note its own background color — pick from preset swatches or any custom color from the picker
 * Pin notes to keep them on top, set a priority (Low/Medium/High, color-coded), and filter the board by All / Pinned / High / Medium / Low
 * The note listing has a fixed, scrollable height (`[wfv_sticky_notes height="480"]` to customize) so the widget doesn't keep growing taller as notes pile up
 
@@ -94,7 +97,7 @@ Admins can see everyone's **files** (useful for team/site oversight). They **can
 
 = Does this require any external services? =
 
-Almost nothing does. Files, Notes, Passwords, encryption, and the Notes rich-text editor all run entirely on your own server using WordPress's built-in APIs — no external calls. The two exceptions: the optional GitHub update check, and the HTML Editor's code pane, which loads the CodeMirror library from a CDN (cdnjs.cloudflare.com) only on pages where you've placed the `[wfv_html_editor]` shortcode. If you don't use that shortcode, that request never happens.
+Almost nothing does. Files, Notes, Passwords, encryption, the Notes rich-text editor, and the HTML Editor's code pane (CodeMirror 6, bundled locally) all run entirely on your own server using WordPress's built-in APIs — no external runtime calls. The only external request is the optional GitHub update check.
 
 = How does the GitHub updater work? =
 
@@ -119,6 +122,28 @@ It depends on whether the visitor is logged in. Logged-in visitors get their not
 3. Passwords — the same layout, with reveal/copy/generate and a master-password lock screen
 
 == Changelog ==
+
+= 2.9.0 =
+* **Upload reliability:** file uploads now go over AJAX one file at a time with a live progress bar, so uploading many or large files no longer trips a single-request timeout
+* **New:** Folder sharing — create a revocable public share link for any folder (optional password, expiry, download limit) that shows a read-only, browsable page of the folder's files and subfolders
+* **New:** Share a folder directly with selected WordPress users; they see it under "Shared with me" and can browse and download its contents (read-only)
+* Direct download button for your own files
+* New folder-share database tables are created automatically on upgrade
+
+= 2.8.1 =
+* Fixed: Sticky Notes line breaks were still lost after saving — the client sanitizer appended each unwrapped block's `<br>` boundary only *after* moving it into the parent, so the check always saw an empty fragment. Boundaries are now decided before the append; line breaks and blank lines survive the save → reload round-trip.
+* Fixed: Sticky Notes color swatches now show their actual color — the composer's preset swatches are filled with their background, and the active swatch matches the note color case-insensitively (so the custom picker also highlights the right preset).
+* Fixed: text/highlight colors are normalized to `<span style="color:…">` / `<span style="background-color:…">` instead of keeping a `<font>` wrapper that the server-side sanitizer would have stripped.
+
+= 2.8.0 =
+* Changed: Sticky Notes formatting is now reliably preserved — the composer forces tag-based formatting (`styleWithCSS` off), keeps the text selection when toolbar buttons are clicked, and turns browser-emitted `<span style>` into `<b>`/`<i>`/`<u>`/`<s>` instead of stripping it.
+* Added: text-color and highlight-color pickers to the Sticky Notes composer (color / background-color spans survive the sanitizer, allowed server-side too).
+* Added: HTML Editor polish — a status bar (cursor line/column, character and line count), a "Copy HTML" button, and a "Clean styles" button that strips every inline `style="…"` attribute and leftover `<font>`/empty `<span>` tags.
+
+= 2.7.0 =
+* Added: Sticky Notes can now store code blocks — a "code" toolbar button wraps the selection in a monospace `<pre>` block (styled dark), and `pre`/`code` were added to the server- and client-side allow-lists.
+* Added: custom note colors — a color row in the composer with preset swatches plus a full color picker; the chosen background is saved per-note (new `color` column, migrated automatically on update).
+* Fixed: multi-line notes lost their line breaks (`<div>` wrappers produced by the editor were being silently unwrapped). The sanitizer now preserves block breaks as `<br>` boundaries, in both the browser and server-side sanitizer, and no longer lets disallowed elements hidden inside an unwrapped wrapper (e.g. a `<script>` inside a `<div>`) slip through.
 
 = 2.6.0 =
 * Added: a formatting toolbar to Sticky Notes (Bold, Italic, Underline, Strikethrough, lists, links) — restricted to a safe tag allow-list enforced both server-side (wp_kses) and client-side (for localStorage-only notes, which never reach the server).
@@ -183,6 +208,15 @@ It depends on whether the visitor is logged in. Logged-in visitors get their not
 * Initial release: private file storage with per-recipient revocable share links (optional password, expiry, download limit)
 
 == Upgrade Notice ==
+
+= 2.8.1 =
+Sticky Notes line breaks are no longer lost on save, color swatches display and highlight correctly, and text/highlight colors survive saving.
+
+= 2.8.0 =
+Sticky Notes formatting (bold, colors, highlights, line breaks) survives saving, and the HTML Editor gained a status bar, Copy button, and an inline-style cleanup tool.
+
+= 2.7.0 =
+Sticky Notes can now hold code blocks and custom colors, and multiline notes keep their line breaks after saving.
 
 = 2.6.0 =
 Sticky Notes now support basic formatting (bold, lists, links) and the note listing scrolls within a fixed height instead of growing indefinitely.
