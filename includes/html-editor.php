@@ -44,6 +44,8 @@ function wfv_h5e_icon( $name ) {
 		'smartphone'  => '<rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>',
 		'minus'       => '<line x1="4" y1="12" x2="20" y2="12"/>',
 		'plus'        => '<line x1="12" y1="4" x2="12" y2="20"/><line x1="4" y1="12" x2="20" y2="12"/>',
+		'type'        => '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
+		'check'       => '<polyline points="20 6 9 17 4 12"/>',
 	);
 	if ( ! isset( $icons[ $name ] ) ) {
 		return '';
@@ -130,19 +132,66 @@ function wfv_html_editor_shortcode( $atts ) {
 			<button type="button" class="wfv-h5e-wide" data-act="demo"><?php echo wfv_h5e_icon( 'file' ); ?> Demo</button>
 			<button type="button" class="wfv-h5e-wide" data-act="clear"><?php echo wfv_h5e_icon( 'trash' ); ?> Clear</button>
 			<button type="button" class="wfv-h5e-wide" data-act="minify"><?php echo wfv_h5e_icon( 'package' ); ?> Minify</button>
-			<button type="button" class="wfv-h5e-wide" data-act="cleanstyles" title="Remove every inline style= attribute and &lt;font&gt; tag"><?php echo wfv_h5e_icon( 'eraser' ); ?> Clean styles</button>
+			<button type="button" class="wfv-h5e-wide" data-act="clean" data-pop="clean" title="Cleaning options"><?php echo wfv_h5e_icon( 'eraser' ); ?> Clean <span class="wfv-h5e-caret"></span></button>
 			<button type="button" data-act="findreplace" title="Find &amp; replace"><?php echo wfv_h5e_icon( 'search' ); ?></button>
-			<input type="color" data-act="color" title="Pick a color, inserts hex at cursor">
+			<button type="button" data-act="lorem" data-pop="lorem" title="Insert placeholder text"><?php echo wfv_h5e_icon( 'type' ); ?></button>
+			<button type="button" data-act="color" data-pop="color" title="Color picker &amp; palette" class="wfv-h5e-colorbtn"><?php echo wfv_h5e_icon( 'droplet' ); ?></button>
 			<button type="button" class="wfv-h5e-wide" data-act="bootstrap" title="Preview only, not saved into your HTML">Bootstrap: Off</button>
 			<span style="flex:1;"></span>
 			<button type="button" data-act="font-minus" title="Smaller font"><?php echo wfv_h5e_icon( 'minus' ); ?></button>
 			<button type="button" data-act="font-plus" title="Larger font"><?php echo wfv_h5e_icon( 'plus' ); ?></button>
 			<button type="button" data-act="copy" title="Copy HTML to clipboard"><?php echo wfv_h5e_icon( 'file' ); ?></button>
 		</div>
+
+		<div class="wfv-h5e-pop" data-pop="clean">
+			<div class="wfv-h5e-cleanopts">
+				<label><input type="checkbox" data-clean="inline" checked> Clear inline styles</label>
+				<label><input type="checkbox" data-clean="classes"> Clear classes &amp; IDs</label>
+				<label><input type="checkbox" data-clean="comments"> Clear comments</label>
+				<label><input type="checkbox" data-clean="empty"> Clear empty tags</label>
+				<label><input type="checkbox" data-clean="attrs"> Clear all other attributes</label>
+				<label><input type="checkbox" data-clean="images"> Clear images</label>
+				<label><input type="checkbox" data-clean="links"> Clear links</label>
+				<label><input type="checkbox" data-clean="tables"> Convert tables to divs</label>
+				<label><input type="checkbox" data-clean="semantic"> Convert &lt;b&gt;&rarr;&lt;strong&gt;, &lt;i&gt;&rarr;&lt;em&gt;</label>
+			</div>
+			<div class="wfv-h5e-cleanopts-actions">
+				<button type="button" data-act="clean-apply" class="button button-small"><?php echo wfv_h5e_icon( 'check' ); ?> Apply clean</button>
+			</div>
+		</div>
+
 		<div class="wfv-h5e-findreplace">
-			<input type="text" data-role="find" placeholder="Find…">
-			<input type="text" data-role="replace" placeholder="Replace with…">
-			<button type="button" data-act="replace-all" class="button button-small">Replace all</button>
+			<div class="wfv-h5e-fr-rows">
+				<div class="wfv-h5e-fr-row"><input type="text" placeholder="Find…" data-role="find"><input type="text" placeholder="Replace with…" data-role="replace"></div>
+			</div>
+			<div class="wfv-h5e-fr-actions">
+				<button type="button" data-act="fr-add" class="button button-small" title="Add another find/replace rule"><?php echo wfv_h5e_icon( 'plus' ); ?></button>
+				<button type="button" data-act="replace-all" class="button button-small">Replace all</button>
+			</div>
+		</div>
+
+		<div class="wfv-h5e-pop" data-pop="lorem">
+			<label class="wfv-h5e-lorem-count">Paragraphs
+				<select data-role="lorem-count">
+					<option value="1">1</option>
+					<option value="2">2</option>
+					<option value="3">3</option>
+					<option value="5" selected>5</option>
+					<option value="10">10</option>
+					<option value="20">20</option>
+				</select>
+			</label>
+			<button type="button" data-act="lorem-insert" class="button button-small">Insert text</button>
+			<button type="button" data-act="lorem-append" class="button button-small">Append</button>
+		</div>
+
+		<div class="wfv-h5e-pop" data-pop="color">
+			<div class="wfv-h5e-colorpick">
+				<input type="color" data-role="newcolor" value="#6366f1">
+				<button type="button" data-act="color-insert" class="button button-small">Insert</button>
+				<button type="button" data-act="color-save" class="button button-small" title="Save to palette">Save</button>
+			</div>
+			<div class="wfv-h5e-swatches" data-role="swatches"></div>
 		</div>
 
 		<div class="wfv-h5e-panes">
