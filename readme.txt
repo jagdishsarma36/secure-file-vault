@@ -4,7 +4,7 @@ Tags: file sharing, password manager, notes, private files, security
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 2.9.0
+Stable tag: 2.9.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -41,16 +41,6 @@ Private file storage with Drive-style folders, a LastPass-style notes and passwo
 * Import from **LastPass**, **Google Password Manager**, or **Bitwarden** CSV exports, or a generic CSV — auto-detected by format, with logins and secure notes routed to the right place automatically
 * No admin override, anywhere — password entries are private to their owner even from site administrators
 
-= HTML Editor =
-
-* A professional, IDE-style dual-pane composer — a real syntax-highlighted code editor (CodeMirror 6, bundled locally with the plugin, with line numbers, bracket matching, auto-closing tags, auto-complete, and a built-in find panel) on the left, a directly-editable visual preview on the right, similar in spirit to html5-editor.net
-* Full formatting toolbar with icon buttons, on the preview side: Bold, Italic, Underline, Strikethrough, heading styles (H1–H4), blockquote, code block, bullet/numbered lists, indent/outdent, alignment, links, images, horizontal rule, clear formatting, undo/redo — edits there sync back into the raw HTML automatically
-* Device-width preview toggle (desktop / tablet / mobile) to check responsive layouts at a glance
-* Nothing is saved anywhere on the server — it's a pure front-end tool. Drop `[wfv_html_editor]` into any post or page and anyone viewing it (no login required) gets a working live editor in their browser
-* Demo content, one-click minify, inline-style cleanup, find &amp; replace, a color picker, one-click copy to clipboard, a live status bar (cursor position + character/line counts), adjustable font size, and an optional Bootstrap CDN toggle for previewing
-* Optional shortcode attributes: `[wfv_html_editor height="600" demo="no"]`
-* Place it multiple times on the same page — each instance runs independently
-* CodeMirror 6 is bundled locally with the plugin (no external CDN, no runtime dependency on third-party servers), loaded only once per page however many times the shortcode is used
 
 = Sticky Notes =
 
