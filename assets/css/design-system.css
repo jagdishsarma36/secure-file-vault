@@ -141,6 +141,6 @@
 		.wfv-toast.wfv-show{ opacity:1; transform:translateY(0); }
 		@media (max-width: 900px) {
 			.wfv-split{ flex-direction:column; min-height:0; }
-			.wfv-split-sidebar{ width:100%; border-right:0; border-bottom:1px solid var(--wfv-border); max-height:400px; }
+			.wfv-split-sidebar{ width:100%; border-right:0; border-bottom:1px solid var(--wfv-border); max-height:340px; }
 			.wfv-split-detail{ padding:24px 20px; }
 		}

@@ -1,7 +1,7 @@
 /* Secure File Vault — Files admin page scripts */
 (function($) {
-    // WP localized data is available as wfvFilesData.ajaxurl, wfvFilesData.uploadNonce, etc.
-    var config = window.wfvFilesData || {};
+    // WP localized data is available as wfvAdminFiles.ajaxurl, wfvAdminFiles.nonce, etc.
+    var config = window.wfvAdminFiles || {};
 
     (function(){
         // Accordion toggle for the shares sub-row.

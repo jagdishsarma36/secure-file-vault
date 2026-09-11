@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Secure File Vault
  * Plugin URI: https://github.com/jagdishsarma36/secure-file-vault
- * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links), CSV import from LastPass/Google/Bitwarden, a [wfv_sticky_notes] shortcode for a pin/priority/filter note board that saves to the database when logged in or to the browser otherwise — all under one unified "Secure Vault" menu with a shared modern design system.
- * Version: 2.9.2
+ * Description: Private file storage inside WordPress with Drive-style folders, colors, starring, and per-recipient share links, a LastPass-style Notes and Password Manager (searchable sidebar + detail pane, full-width rich-text editing, master-password vault lock, and sharing to other WP users or via public links), CSV import from LastPass/Google/Bitwarden, a [wfv_html_editor] shortcode that embeds a live, stateless dual-pane HTML editor anyone can use on the front end, and a [wfv_sticky_notes] shortcode for a pin/priority/filter note board that saves to the database when logged in or to the browser otherwise — all under one unified "Secure Vault" menu with a shared modern design system.
+ * Version: 2.9.3
  * Author: Jagdish Sarma
  * Author URI: https://github.com/jagdishsarma36
  * License: GPL2
@@ -16,7 +16,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-define( 'WFV_VERSION', '2.9.2' );
+define( 'WFV_VERSION', '2.9.3' );
 define( 'WFV_PRIVATE_DIRNAME', 'wfv-private' );
 define( 'WFV_FILE', __FILE__ );
 define( 'WFV_DIR', plugin_dir_path( __FILE__ ) );
